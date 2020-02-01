@@ -1,4 +1,18 @@
-module Audio exposing (Audio, AudioSource, AudioTime(..), Error(..), applicationWithAudio, audio, documentWithAudio, elementWithAudio, group, loadAudio, multiplyPitchBy, multiplyVolumeBy, sineWave)
+module Audio exposing
+    ( Audio
+    , AudioSource
+    , Error(..)
+    , applicationWithAudio
+    , audio
+    , documentWithAudio
+    , elementWithAudio
+    , group
+    , loadAudio
+    , scalePlaybackRateAt
+    , scaleVolume
+    , scaleVolumeAt
+    , sineWave
+    )
 
 {- Basic idea for an audio package.
 
@@ -47,8 +61,11 @@ module Audio exposing (Audio, AudioSource, AudioTime(..), Error(..), application
 
 import Browser
 import Browser.Navigation exposing (Key)
+import Duration exposing (Duration)
 import Html exposing (Html)
 import Json.Encode
+import Quantity
+import Set exposing (Set)
 import Task exposing (Task)
 import Time
 import Url exposing (Url)
@@ -65,28 +82,98 @@ type Msg a
     | UserMsg a
 
 
+sandboxWithAudio :
+    { init : model
+    , view : model -> Html msg
+    , update : msg -> model -> model
+    , audio : model -> Audio
+    , audioPort : Json.Encode.Value -> Cmd msg
+    }
+    -> Program () (Model model) (Msg msg)
+sandboxWithAudio app =
+    { init = \_ -> initHelper app.audioPort app.audio ( app.init, Cmd.none )
+    , view = .userModel >> app.view >> Html.map UserMsg
+    , update =
+        \msg model ->
+            case msg of
+                UserMsg userMsg ->
+                    let
+                        newUserModel =
+                            app.update userMsg model.userModel
+
+                        newAudioState =
+                            app.audio newUserModel
+
+                        diff =
+                            diffAudioState model.audioState newAudioState |> app.audioPort
+                    in
+                    ( { audioState = newAudioState, userModel = newUserModel }
+                    , Cmd.map UserMsg diff
+                    )
+
+                AudioLoad ->
+                    Debug.todo ""
+    , subscriptions = always Sub.none
+    }
+        |> Browser.element
+
+
 elementWithAudio :
     { init : flags -> ( model, Cmd msg )
     , view : model -> Html msg
     , update : msg -> model -> ( model, Cmd msg )
-    , subscriptions : model -> Cmd msg
+    , subscriptions : model -> Sub msg
     , audio : model -> Audio
+    , audioPort : Json.Encode.Value -> Cmd msg
     }
-    -> Program flags (Model a) msg
-elementWithAudio =
-    Debug.todo ""
+    -> Program flags (Model model) (Msg msg)
+elementWithAudio app =
+    { init = app.init >> initHelper app.audioPort app.audio
+    , view = .userModel >> app.view >> Html.map UserMsg
+    , update =
+        \msg model ->
+            case msg of
+                UserMsg userMsg ->
+                    updateHelper app.audioPort app.audio (app.update userMsg) model
+
+                AudioLoad ->
+                    Debug.todo ""
+    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+    }
+        |> Browser.element
 
 
 documentWithAudio :
-    { init : flags -> ( model, unknown )
+    { init : flags -> ( model, Cmd msg )
     , view : model -> Browser.Document msg
-    , update : msg -> model -> ( model, unknown )
-    , subscriptions : model -> unknown
+    , update : msg -> model -> ( model, Cmd msg )
+    , subscriptions : model -> Sub msg
     , audio : model -> Audio
+    , audioPort : Json.Encode.Value -> Cmd msg
     }
-    -> Program flags (Model a) msg
-documentWithAudio =
-    Debug.todo ""
+    -> Program flags (Model model) (Msg msg)
+documentWithAudio app =
+    { init = app.init >> initHelper app.audioPort app.audio
+    , view =
+        \model ->
+            let
+                { title, body } =
+                    app.view model.userModel
+            in
+            { title = title
+            , body = body |> List.map (Html.map UserMsg)
+            }
+    , update =
+        \msg model ->
+            case msg of
+                UserMsg userMsg ->
+                    updateHelper app.audioPort app.audio (app.update userMsg) model
+
+                AudioLoad ->
+                    Debug.todo ""
+    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+    }
+        |> Browser.document
 
 
 applicationWithAudio :
@@ -94,10 +181,10 @@ applicationWithAudio :
     , view : model -> Browser.Document msg
     , update : msg -> model -> ( model, Cmd msg )
     , subscriptions : model -> Sub msg
-    , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd msg
     , onUrlRequest : Browser.UrlRequest -> msg
     , onUrlChange : Url -> msg
+    , audio : model -> Audio
+    , audioPort : Json.Encode.Value -> Cmd msg
     }
     -> Program flags (Model model) (Msg msg)
 applicationWithAudio app =
@@ -215,18 +302,83 @@ initHelper audioPort audioFunc userInit =
 
 diffAudioState : Audio -> Audio -> Json.Encode.Value
 diffAudioState oldAudio newAudio =
+    let
+        flattenedOldAudio =
+            flattenAudio oldAudio
+
+        flattenedNewAudio =
+            flattenAudio newAudio
+
+        a =
+            0
+    in
     Debug.todo ""
+
+
+type alias FlattenedAudio =
+    { source : AudioSource
+    , startTime : Duration
+    , endTime : Maybe Duration
+    , startAt : Float
+    , volume : List { scaleBy : Float, startTime : Duration }
+    , playbackRate : List { scaleBy : Float, startTime : Duration }
+    }
+
+
+flattenAudio : Audio -> List FlattenedAudio
+flattenAudio audio_ =
+    case audio_ of
+        Group group_ ->
+            group_ |> List.map flattenAudio |> List.concat
+
+        BasicAudio { source, startTime, endTime, startAt } ->
+            [ { source = source
+              , startTime = startTime
+              , endTime = endTime
+              , startAt = startAt
+              , volume = []
+              , playbackRate = []
+              }
+            ]
+
+        Effect effect ->
+            case effect.effectType of
+                ScaleVolume scaleVolume_ ->
+                    List.map
+                        (\{ source, startTime, endTime, startAt, volume, playbackRate } ->
+                            { source = source
+                            , startTime = startTime
+                            , endTime = endTime
+                            , startAt = startAt
+                            , volume = scaleVolume_ :: volume
+                            , playbackRate = playbackRate
+                            }
+                        )
+                        (flattenAudio effect.audio)
+
+                ScalePlaybackRate scalePlaybackRate ->
+                    List.map
+                        (\{ source, startTime, endTime, startAt, volume, playbackRate } ->
+                            { source = source
+                            , startTime = startTime
+                            , endTime = endTime
+                            , startAt = startAt
+                            , volume = volume
+                            , playbackRate = scalePlaybackRate :: playbackRate
+                            }
+                        )
+                        (flattenAudio effect.audio)
 
 
 type Audio
     = Group (List Audio)
-    | Audio { source : AudioSource, startTime : AudioTime, endTime : Maybe AudioTime, millisecondOffset : Float }
+    | BasicAudio { source : AudioSource, startTime : Duration, endTime : Maybe Duration, startAt : Float }
     | Effect { effectType : EffectType, audio : Audio }
 
 
 type EffectType
-    = ScaleVolume Float
-    | ScalePitch Float
+    = ScaleVolume { scaleBy : Float, startTime : Duration }
+    | ScalePlaybackRate { scaleBy : Float, startTime : Duration }
 
 
 type AudioSource
@@ -234,24 +386,24 @@ type AudioSource
     | SineWave { frequency : Float }
 
 
-type AudioTime
-    = MillisecondsSinceAppStart Float
-    | AbsoluteTime Time.Posix
-
-
-audio : AudioSource -> AudioTime -> Maybe AudioTime -> Float -> Audio
+audio : AudioSource -> Duration -> Maybe Duration -> Float -> Audio
 audio source startTime endTime offset =
-    Audio { source = source, startTime = startTime, endTime = endTime, millisecondOffset = offset }
+    BasicAudio { source = source, startTime = startTime, endTime = endTime, startAt = offset }
 
 
-multiplyVolumeBy : Float -> Audio -> Audio
-multiplyVolumeBy scaleBy audio_ =
-    Effect { effectType = ScaleVolume scaleBy, audio = audio_ }
+scaleVolume : Float -> Audio -> Audio
+scaleVolume scaleBy audio_ =
+    Effect { effectType = ScaleVolume { scaleBy = scaleBy, startTime = Quantity.zero }, audio = audio_ }
 
 
-multiplyPitchBy : Float -> Audio -> Audio
-multiplyPitchBy scaleBy audio_ =
-    Effect { effectType = ScalePitch scaleBy, audio = audio_ }
+scaleVolumeAt : Float -> Duration -> Audio -> Audio
+scaleVolumeAt scaleBy startTime audio_ =
+    Effect { effectType = ScaleVolume { scaleBy = scaleBy, startTime = startTime }, audio = audio_ }
+
+
+scalePlaybackRateAt : Float -> Duration -> Audio -> Audio
+scalePlaybackRateAt scaleBy startTime audio_ =
+    Effect { effectType = ScalePlaybackRate { scaleBy = scaleBy, startTime = startTime }, audio = audio_ }
 
 
 group : List Audio -> Audio
