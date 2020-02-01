@@ -59,12 +59,14 @@ module Audio exposing
 
 -}
 
+import AssocList as Dict
 import Browser
 import Browser.Navigation exposing (Key)
 import Duration exposing (Duration)
 import Html exposing (Html)
-import Json.Encode
-import Quantity
+import Json.Encode as JE
+import List.Extra
+import Quantity exposing (Quantity)
 import Set exposing (Set)
 import Task exposing (Task)
 import Time
@@ -87,7 +89,7 @@ sandboxWithAudio :
     , view : model -> Html msg
     , update : msg -> model -> model
     , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd msg
+    , audioPort : JE.Value -> Cmd msg
     }
     -> Program () (Model model) (Msg msg)
 sandboxWithAudio app =
@@ -124,7 +126,7 @@ elementWithAudio :
     , update : msg -> model -> ( model, Cmd msg )
     , subscriptions : model -> Sub msg
     , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd msg
+    , audioPort : JE.Value -> Cmd msg
     }
     -> Program flags (Model model) (Msg msg)
 elementWithAudio app =
@@ -149,7 +151,7 @@ documentWithAudio :
     , update : msg -> model -> ( model, Cmd msg )
     , subscriptions : model -> Sub msg
     , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd msg
+    , audioPort : JE.Value -> Cmd msg
     }
     -> Program flags (Model model) (Msg msg)
 documentWithAudio app =
@@ -184,7 +186,7 @@ applicationWithAudio :
     , onUrlRequest : Browser.UrlRequest -> msg
     , onUrlChange : Url -> msg
     , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd msg
+    , audioPort : JE.Value -> Cmd msg
     }
     -> Program flags (Model model) (Msg msg)
 applicationWithAudio app =
@@ -222,7 +224,7 @@ lamderaFrontendWithAudio :
     , onUrlRequest : Browser.UrlRequest -> frontendMsg
     , onUrlChange : Url -> frontendMsg
     , audio : model -> Audio
-    , audioPort : Json.Encode.Value -> Cmd frontendMsg
+    , audioPort : JE.Value -> Cmd frontendMsg
     }
     ->
         { init : Url.Url -> Browser.Navigation.Key -> ( Model model, Cmd (Msg frontendMsg) )
@@ -263,7 +265,7 @@ lamderaFrontendWithAudio app =
 
 
 updateHelper :
-    (Json.Encode.Value -> Cmd msg)
+    (JE.Value -> Cmd msg)
     -> (model -> Audio)
     -> (model -> ( model, Cmd msg ))
     -> Model model
@@ -300,26 +302,87 @@ initHelper audioPort audioFunc userInit =
     )
 
 
-diffAudioState : Audio -> Audio -> Json.Encode.Value
+diffAudioState : Audio -> Audio -> JE.Value
 diffAudioState oldAudio newAudio =
     let
+        --toComparable : FlattenedAudio -> a
+        --toComparable a =
+        --    (case a.source of
+        --        AudioFile string ->
+        --
+        --
+        --        SineWave record ->
+        --
+        --    )
         flattenedOldAudio =
             flattenAudio oldAudio
 
         flattenedNewAudio =
             flattenAudio newAudio
-
-        a =
-            0
     in
-    Debug.todo ""
+    flattenedNewAudio |> JE.list encodeFlattenedAudio
+
+
+encodeFlattenedAudio : FlattenedAudio -> JE.Value
+encodeFlattenedAudio flattenedAudio =
+    JE.object
+        [ ( "source", encodeAudioSource flattenedAudio.source )
+        , ( "startTime", JE.float (Duration.inMilliseconds flattenedAudio.startTime) )
+        , ( "endTime"
+          , case flattenedAudio.endTime of
+                Just endTime ->
+                    JE.float (Duration.inMilliseconds endTime)
+
+                Nothing ->
+                    JE.null
+          )
+        , ( "startAt", JE.float (Duration.inMilliseconds flattenedAudio.startAt) )
+        , ( "volume"
+          , flattenedAudio.volume |> Quantity.sortBy .startTime |> JE.list encodeVolumeEffect
+          )
+        , ( "playbackRate"
+          , flattenedAudio.playbackRate |> Quantity.sortBy .startTime |> JE.list encodePlaybackRateEffect
+          )
+        ]
+
+
+encodeVolumeEffect : { startTime : Duration, scaleBy : Float } -> JE.Value
+encodeVolumeEffect { startTime, scaleBy } =
+    JE.object
+        [ ( "startTime", JE.float (Duration.inMilliseconds startTime) )
+        , ( "scaleBy", JE.float scaleBy )
+        ]
+
+
+encodePlaybackRateEffect : { startTime : Duration, scaleBy : Float } -> JE.Value
+encodePlaybackRateEffect { startTime, scaleBy } =
+    JE.object
+        [ ( "startTime", JE.float (Duration.inMilliseconds startTime) )
+        , ( "scaleBy", JE.float scaleBy )
+        ]
+
+
+encodeAudioSource : AudioSource -> JE.Value
+encodeAudioSource audioSource =
+    case audioSource of
+        AudioFile audioFile ->
+            JE.object
+                [ ( "type", JE.int 0 )
+                , ( "id", JE.int audioFile.id )
+                ]
+
+        SineWave { frequency } ->
+            JE.object
+                [ ( "type", JE.int 1 )
+                , ( "frequency", JE.float frequency )
+                ]
 
 
 type alias FlattenedAudio =
     { source : AudioSource
     , startTime : Duration
     , endTime : Maybe Duration
-    , startAt : Float
+    , startAt : Duration
     , volume : List { scaleBy : Float, startTime : Duration }
     , playbackRate : List { scaleBy : Float, startTime : Duration }
     }
@@ -372,7 +435,7 @@ flattenAudio audio_ =
 
 type Audio
     = Group (List Audio)
-    | BasicAudio { source : AudioSource, startTime : Duration, endTime : Maybe Duration, startAt : Float }
+    | BasicAudio { source : AudioSource, startTime : Duration, endTime : Maybe Duration, startAt : Duration }
     | Effect { effectType : EffectType, audio : Audio }
 
 
@@ -382,13 +445,13 @@ type EffectType
 
 
 type AudioSource
-    = AudioFile String
+    = AudioFile { id : Int }
     | SineWave { frequency : Float }
 
 
-audio : AudioSource -> Duration -> Maybe Duration -> Float -> Audio
-audio source startTime endTime offset =
-    BasicAudio { source = source, startTime = startTime, endTime = endTime, startAt = offset }
+audio : AudioSource -> Duration -> Maybe Duration -> Duration -> Audio
+audio source startTime endTime startAt =
+    BasicAudio { source = source, startTime = startTime, endTime = endTime, startAt = startAt }
 
 
 scaleVolume : Float -> Audio -> Audio
