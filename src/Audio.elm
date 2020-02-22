@@ -1,17 +1,22 @@
 module Audio exposing
     ( Audio
-    , AudioSource
-    , Error(..)
+    , AudioCmd
+    , LoadError(..)
+    , Model
+    , Msg
+    , Source(..)
     , applicationWithAudio
     , audio
+    , cmdBatch
+    , cmdNone
     , documentWithAudio
     , elementWithAudio
     , group
     , loadAudio
-    , scalePlaybackRateAt
     , scaleVolume
     , scaleVolumeAt
-    , sineWave
+    , silence
+    , sourceDuration
     )
 
 {- Basic idea for an audio package.
@@ -19,7 +24,7 @@ module Audio exposing
    The foundational idea here is that:
 
    1. Audio is like a view function.
-   It's takes a modelnd returns a collection of sounds that should be playing.
+   It's takes a model and returns a collection of sounds that should be playing.
    If a sound effect stops being returned from our audio function then it stops playing.
    2. It should be configurable enough that the user doesn't need to say what sounds should be playing 60 times per second.
    For example, `audio` lets us choose when a sound effect should play rather than needing to wait until that exact moment.
@@ -59,275 +64,503 @@ module Audio exposing
 
 -}
 
-import AssocList as Dict
 import Browser
 import Browser.Navigation exposing (Key)
+import Dict exposing (Dict)
 import Duration exposing (Duration)
 import Html exposing (Html)
+import Json.Decode as JD
 import Json.Encode as JE
-import List.Extra
-import Quantity exposing (Quantity)
-import Set exposing (Set)
-import Task exposing (Task)
+import List.Extra as List
+import Quantity exposing (Quantity, Rate, Unitless)
 import Time
 import Url exposing (Url)
 
 
-type alias Model a =
+{-| -}
+type Model userMsg userModel
+    = Model (Model_ userMsg userModel)
+
+
+type alias Model_ userMsg userModel =
     { audioState : Audio
-    , userModel : a
+    , userModel : userModel
+    , requestCount : Int
+    , pendingRequests : Dict Int (AudioLoadRequest_ userMsg)
+    , samplesPerSecond : Maybe Int
     }
 
 
-type Msg a
-    = AudioLoad
-    | UserMsg a
+{-| -}
+type Msg userMsg
+    = FromJSMsg FromJSMsg
+    | UserMsg userMsg
 
 
-sandboxWithAudio :
-    { init : model
-    , view : model -> Html msg
-    , update : msg -> model -> model
-    , audio : model -> Audio
-    , audioPort : JE.Value -> Cmd msg
-    }
-    -> Program () (Model model) (Msg msg)
-sandboxWithAudio app =
-    { init = \_ -> initHelper app.audioPort app.audio ( app.init, Cmd.none )
-    , view = .userModel >> app.view >> Html.map UserMsg
-    , update =
-        \msg model ->
-            case msg of
-                UserMsg userMsg ->
-                    let
-                        newUserModel =
-                            app.update userMsg model.userModel
-
-                        newAudioState =
-                            app.audio newUserModel
-
-                        diff =
-                            diffAudioState model.audioState newAudioState |> app.audioPort
-                    in
-                    ( { audioState = newAudioState, userModel = newUserModel }
-                    , Cmd.map UserMsg diff
-                    )
-
-                AudioLoad ->
-                    Debug.todo ""
-    , subscriptions = always Sub.none
-    }
-        |> Browser.element
+type FromJSMsg
+    = AudioLoadSuccess { requestId : Int, bufferId : Int, duration : Duration }
+    | AudioLoadFailed { requestId : Int, error : LoadError }
+    | InitAudioContext { samplesPerSecond : Int }
+    | JsonParseError { error : String }
 
 
+type alias AudioLoadRequest_ userMsg =
+    { userMsg : Result LoadError Source -> userMsg, audioUrl : String }
+
+
+{-| An audio command.
+-}
+type AudioCmd userMsg
+    = AudioLoadRequest (AudioLoadRequest_ userMsg)
+    | AudioCmdGroup (List (AudioCmd userMsg))
+
+
+{-| Combine multiple commands into a single command. Conceptually the same as Cmd.batch.
+-}
+cmdBatch : List (AudioCmd userMsg) -> AudioCmd userMsg
+cmdBatch audioCmds =
+    AudioCmdGroup audioCmds
+
+
+{-| A command that does nothing. Conceptually the same as Cmd.none.
+-}
+cmdNone : AudioCmd msg
+cmdNone =
+    AudioCmdGroup []
+
+
+{-| Ports that allows this package to communicate with the JS portion of the package.
+-}
+type alias Ports msg =
+    { toJS : JE.Value -> Cmd (Msg msg), fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg) }
+
+
+getUserModel : Model userMsg userModel -> userModel
+getUserModel (Model model) =
+    model.userModel
+
+
+{-| Browser.element but with the ability to play sounds.
+-}
 elementWithAudio :
-    { init : flags -> ( model, Cmd msg )
+    { init : flags -> ( model, Cmd msg, AudioCmd msg )
     , view : model -> Html msg
-    , update : msg -> model -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
     , subscriptions : model -> Sub msg
     , audio : model -> Audio
-    , audioPort : JE.Value -> Cmd msg
+    , audioPort : Ports msg
     }
-    -> Program flags (Model model) (Msg msg)
+    -> Program flags (Model msg model) (Msg msg)
 elementWithAudio app =
-    { init = app.init >> initHelper app.audioPort app.audio
-    , view = .userModel >> app.view >> Html.map UserMsg
-    , update =
-        \msg model ->
-            case msg of
-                UserMsg userMsg ->
-                    updateHelper app.audioPort app.audio (app.update userMsg) model
-
-                AudioLoad ->
-                    Debug.todo ""
-    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+    { init = app.init >> initHelper app.audioPort.toJS app.audio
+    , view = getUserModel >> app.view >> Html.map UserMsg
+    , update = update app
+    , subscriptions = subscriptions app
     }
         |> Browser.element
 
 
+{-| Browser.document but with the ability to play sounds.
+-}
 documentWithAudio :
-    { init : flags -> ( model, Cmd msg )
+    { init : flags -> ( model, Cmd msg, AudioCmd msg )
     , view : model -> Browser.Document msg
-    , update : msg -> model -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
     , subscriptions : model -> Sub msg
     , audio : model -> Audio
-    , audioPort : JE.Value -> Cmd msg
+    , audioPort : Ports msg
     }
-    -> Program flags (Model model) (Msg msg)
+    -> Program flags (Model msg model) (Msg msg)
 documentWithAudio app =
-    { init = app.init >> initHelper app.audioPort app.audio
+    { init = app.init >> initHelper app.audioPort.toJS app.audio
     , view =
         \model ->
             let
                 { title, body } =
-                    app.view model.userModel
+                    app.view (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
             }
-    , update =
-        \msg model ->
-            case msg of
-                UserMsg userMsg ->
-                    updateHelper app.audioPort app.audio (app.update userMsg) model
-
-                AudioLoad ->
-                    Debug.todo ""
-    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+    , update = update app
+    , subscriptions = subscriptions app
     }
         |> Browser.document
 
 
+{-| Browser.application but with the ability to play sounds.
+-}
 applicationWithAudio :
-    { init : flags -> Url -> Key -> ( model, Cmd msg )
+    { init : flags -> Url -> Key -> ( model, Cmd msg, AudioCmd msg )
     , view : model -> Browser.Document msg
-    , update : msg -> model -> ( model, Cmd msg )
+    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
     , subscriptions : model -> Sub msg
     , onUrlRequest : Browser.UrlRequest -> msg
     , onUrlChange : Url -> msg
     , audio : model -> Audio
-    , audioPort : JE.Value -> Cmd msg
+    , audioPort : Ports msg
     }
-    -> Program flags (Model model) (Msg msg)
+    -> Program flags (Model msg model) (Msg msg)
 applicationWithAudio app =
-    { init = \flags url key -> initHelper app.audioPort app.audio (app.init flags url key)
+    { init = \flags url key -> app.init flags url key |> initHelper app.audioPort.toJS app.audio
     , view =
         \model ->
             let
                 { title, body } =
-                    app.view model.userModel
+                    app.view (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
             }
-    , update =
-        \msg model ->
-            case msg of
-                UserMsg userMsg ->
-                    updateHelper app.audioPort app.audio (app.update userMsg) model
-
-                AudioLoad ->
-                    Debug.todo ""
-    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+    , update = update app
+    , subscriptions = subscriptions app
     , onUrlRequest = app.onUrlRequest >> UserMsg
     , onUrlChange = app.onUrlChange >> UserMsg
     }
         |> Browser.application
 
 
+{-| Lamdera.frontend but with the ability to play sounds (highly experimental, just ignore this for now).
+-}
 lamderaFrontendWithAudio :
-    { init : Url.Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg )
+    { init : Url.Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
     , view : model -> Browser.Document frontendMsg
-    , update : frontendMsg -> model -> ( model, Cmd frontendMsg )
-    , updateFromBackend : toFrontend -> model -> ( model, Cmd frontendMsg )
+    , update : frontendMsg -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
+    , updateFromBackend : toFrontend -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
     , subscriptions : model -> Sub frontendMsg
     , onUrlRequest : Browser.UrlRequest -> frontendMsg
     , onUrlChange : Url -> frontendMsg
     , audio : model -> Audio
-    , audioPort : JE.Value -> Cmd frontendMsg
+    , audioPort : Ports frontendMsg
     }
     ->
-        { init : Url.Url -> Browser.Navigation.Key -> ( Model model, Cmd (Msg frontendMsg) )
-        , view : Model model -> Browser.Document (Msg frontendMsg)
-        , update : Msg frontendMsg -> Model model -> ( Model model, Cmd (Msg frontendMsg) )
-        , updateFromBackend : toFrontend -> Model model -> ( Model model, Cmd (Msg frontendMsg) )
-        , subscriptions : Model model -> Sub (Msg frontendMsg)
+        { init : Url.Url -> Browser.Navigation.Key -> ( Model frontendMsg model, Cmd (Msg frontendMsg) )
+        , view : Model frontendMsg model -> Browser.Document (Msg frontendMsg)
+        , update : Msg frontendMsg -> Model frontendMsg model -> ( Model frontendMsg model, Cmd (Msg frontendMsg) )
+        , updateFromBackend : toFrontend -> Model frontendMsg model -> ( Model frontendMsg model, Cmd (Msg frontendMsg) )
+        , subscriptions : Model frontendMsg model -> Sub (Msg frontendMsg)
         , onUrlRequest : Browser.UrlRequest -> Msg frontendMsg
         , onUrlChange : Url -> Msg frontendMsg
         }
 lamderaFrontendWithAudio app =
-    { init =
-        \url key -> initHelper app.audioPort app.audio (app.init url key)
+    { init = \url key -> initHelper app.audioPort.toJS app.audio (app.init url key)
     , view =
         \model ->
             let
                 { title, body } =
-                    app.view model.userModel
+                    app.view (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
             }
-    , update =
-        \msg model ->
-            case msg of
-                UserMsg userMsg ->
-                    updateHelper app.audioPort app.audio (app.update userMsg) model
-
-                AudioLoad ->
-                    Debug.todo ""
+    , update = update app
     , updateFromBackend =
         \toFrontend model ->
-            updateHelper app.audioPort app.audio (app.updateFromBackend toFrontend) model
-    , subscriptions = \model -> app.subscriptions model.userModel |> Sub.map UserMsg
+            updateHelper app.audioPort.toJS app.audio (app.updateFromBackend toFrontend) model
+    , subscriptions = subscriptions app
     , onUrlRequest = app.onUrlRequest >> UserMsg
     , onUrlChange = app.onUrlChange >> UserMsg
     }
 
 
 updateHelper :
-    (JE.Value -> Cmd msg)
-    -> (model -> Audio)
-    -> (model -> ( model, Cmd msg ))
-    -> Model model
-    -> ( Model model, Cmd (Msg msg) )
-updateHelper audioPort audioFunc userUpdate model =
+    (JD.Value -> Cmd (Msg userMsg))
+    -> (userModel -> Audio)
+    -> (userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg ))
+    -> Model userMsg userModel
+    -> ( Model userMsg userModel, Cmd (Msg userMsg) )
+updateHelper audioPort audioFunc userUpdate (Model model) =
     let
-        ( newUserModel, userCmd ) =
+        ( newUserModel, userCmd, audioCmds ) =
             userUpdate model.userModel
 
         newAudioState =
             audioFunc newUserModel
 
         diff =
-            diffAudioState model.audioState newAudioState |> audioPort
+            diffAudioState model.audioState newAudioState
+
+        newModel : Model userMsg userModel
+        newModel =
+            Model { model | audioState = newAudioState, userModel = newUserModel }
+
+        ( newModel2, audioRequests ) =
+            audioCmds |> encodeAudioCmd newModel
+
+        portMessage =
+            JE.object
+                [ ( "audio", diff )
+                , ( "audioCmds", audioRequests )
+                ]
     in
-    ( { audioState = newAudioState, userModel = newUserModel }
-    , Cmd.batch [ Cmd.map UserMsg userCmd, Cmd.map UserMsg diff ]
+    ( newModel2
+    , Cmd.batch [ Cmd.map UserMsg userCmd, audioPort portMessage ]
     )
 
 
-initHelper audioPort audioFunc userInit =
+initHelper :
+    (JD.Value -> Cmd (Msg userMsg))
+    -> (model -> Audio)
+    -> ( model, Cmd userMsg, AudioCmd userMsg )
+    -> ( Model userMsg model, Cmd (Msg userMsg) )
+initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     let
-        ( newUserModel, userCmd ) =
-            userInit
-
+        newAudioState : Audio
         newAudioState =
-            audioFunc newUserModel
+            audioFunc model
 
         diff =
-            diffAudioState silence newAudioState |> audioPort
+            diffAudioState silence newAudioState
+
+        initialModel =
+            Model
+                { audioState = newAudioState
+                , userModel = model
+                , requestCount = 0
+                , pendingRequests = Dict.empty
+                , samplesPerSecond = Nothing
+                }
+
+        ( initialModel2, audioRequests ) =
+            audioCmds |> encodeAudioCmd initialModel
+
+        portMessage : JE.Value
+        portMessage =
+            JE.object
+                [ ( "audio", diff )
+                , ( "audioCmds", audioRequests )
+                ]
     in
-    ( { audioState = newAudioState, userModel = newUserModel }
-    , Cmd.batch [ Cmd.map UserMsg userCmd, Cmd.map UserMsg diff ]
+    ( initialModel2
+    , Cmd.batch [ Cmd.map UserMsg cmds, audioPort portMessage ]
     )
+
+
+update :
+    { a
+        | audioPort : Ports userMsg
+        , audio : userModel -> Audio
+        , update : userMsg -> userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg )
+    }
+    -> Msg userMsg
+    -> Model userMsg userModel
+    -> ( Model userMsg userModel, Cmd (Msg userMsg) )
+update app msg (Model model) =
+    case msg of
+        UserMsg userMsg ->
+            updateHelper app.audioPort.toJS app.audio (app.update userMsg) (Model model)
+
+        FromJSMsg response ->
+            case response of
+                AudioLoadSuccess { requestId, bufferId, duration } ->
+                    case Dict.get requestId model.pendingRequests of
+                        Just pendingRequest ->
+                            let
+                                userMsg =
+                                    { bufferId = bufferId
+                                    , duration = duration
+                                    }
+                                        |> File
+                                        |> Ok
+                                        |> pendingRequest.userMsg
+                            in
+                            { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                |> Model
+                                |> updateHelper
+                                    app.audioPort.toJS
+                                    app.audio
+                                    (app.update userMsg)
+
+                        Nothing ->
+                            ( Model model, Cmd.none )
+
+                AudioLoadFailed { requestId, error } ->
+                    case Dict.get requestId model.pendingRequests of
+                        Just pendingRequest ->
+                            let
+                                userMsg =
+                                    Err error |> pendingRequest.userMsg
+                            in
+                            { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                |> Model
+                                |> updateHelper
+                                    app.audioPort.toJS
+                                    app.audio
+                                    (app.update userMsg)
+
+                        Nothing ->
+                            ( Model model, Cmd.none )
+
+                InitAudioContext { samplesPerSecond } ->
+                    ( Model { model | samplesPerSecond = Just samplesPerSecond }, Cmd.none )
+
+                JsonParseError { error } ->
+                    Debug.todo error
+
+
+subscriptions :
+    { a | subscriptions : userModel -> Sub userMsg, audioPort : Ports userMsg }
+    -> Model userMsg userModel
+    -> Sub (Msg userMsg)
+subscriptions app (Model model) =
+    Sub.batch [ app.subscriptions model.userModel |> Sub.map UserMsg, app.audioPort.fromJS fromJSPortSub ]
+
+
+decodeLoadError =
+    JD.string
+        |> JD.andThen
+            (\value ->
+                case value of
+                    "NetworkError" ->
+                        JD.succeed NetworkError
+
+                    "MediaDecodeAudioDataUnknownContentType" ->
+                        JD.succeed MediaDecodeAudioDataUnknownContentType
+
+                    _ ->
+                        JD.fail "Unknown load error"
+            )
+
+
+decodeFromJSMsg =
+    JD.field "type" JD.int
+        |> JD.andThen
+            (\value ->
+                case value of
+                    0 ->
+                        JD.map2 (\requestId error -> AudioLoadFailed { requestId = requestId, error = error })
+                            (JD.field "requestId" JD.int)
+                            (JD.field "error" decodeLoadError)
+
+                    1 ->
+                        JD.map3
+                            (\requestId bufferId duration ->
+                                AudioLoadSuccess
+                                    { requestId = requestId
+                                    , bufferId = bufferId
+                                    , duration = Duration.seconds duration
+                                    }
+                            )
+                            (JD.field "requestId" JD.int)
+                            (JD.field "bufferId" JD.int)
+                            (JD.field "durationInSeconds" JD.float)
+
+                    2 ->
+                        JD.map (\samplesPerSecond -> InitAudioContext { samplesPerSecond = samplesPerSecond })
+                            (JD.field "samplesPerSecond" JD.int)
+
+                    _ ->
+                        JsonParseError { error = "Type " ++ String.fromInt value ++ " not handled." } |> JD.succeed
+            )
+
+
+fromJSPortSub : JD.Value -> Msg userMsg
+fromJSPortSub json =
+    case JD.decodeValue decodeFromJSMsg json of
+        Ok value ->
+            FromJSMsg value
+
+        Err error ->
+            FromJSMsg (JsonParseError { error = JD.errorToString error })
 
 
 diffAudioState : Audio -> Audio -> JE.Value
 diffAudioState oldAudio newAudio =
     let
-        --toComparable : FlattenedAudio -> a
-        --toComparable a =
-        --    (case a.source of
-        --        AudioFile string ->
-        --
-        --
-        --        SineWave record ->
-        --
-        --    )
         flattenedOldAudio =
             flattenAudio oldAudio
 
+        flattenedNewAudio : List FlattenedAudio
         flattenedNewAudio =
             flattenAudio newAudio
+
+        getDict =
+            List.gatherEqualsBy (\audio_ -> audioSourceBufferId audio_.source)
+                >> List.map (\( audio_, rest ) -> ( audioSourceBufferId audio_.source, audio_ :: rest ))
+                >> Dict.fromList
     in
-    flattenedNewAudio |> JE.list encodeFlattenedAudio
+    Dict.merge
+        (\bufferId oldValues result -> diffLists bufferId oldValues [] ++ result)
+        (\bufferId oldValues newValues result -> diffLists bufferId oldValues newValues ++ result)
+        (\bufferId newValues result -> diffLists bufferId [] newValues ++ result)
+        (getDict flattenedOldAudio)
+        (getDict flattenedNewAudio)
+        []
+        |> JE.list identity
+
+
+diffLists : Int -> List FlattenedAudio -> List FlattenedAudio -> List JE.Value
+diffLists bufferId oldValues newValues =
+    if oldValues == newValues then
+        []
+
+    else
+        [ oldValues
+            |> List.map
+                (\oldValue ->
+                    JE.object
+                        [ ( "bufferId", JE.int bufferId )
+                        , ( "action", JE.string "stopSound" )
+                        ]
+                )
+        , newValues
+            |> List.map
+                (\newValue ->
+                    JE.object
+                        [ ( "bufferId", JE.int bufferId )
+                        , ( "action", JE.string "startSound" )
+                        , ( "startTime", JE.int (Time.posixToMillis newValue.startTime) )
+                        ]
+                )
+        ]
+            |> List.concat
+
+
+flattenAudioCmd : AudioCmd msg -> List (AudioLoadRequest_ msg)
+flattenAudioCmd audioCmd =
+    case audioCmd of
+        AudioLoadRequest data ->
+            [ data ]
+
+        AudioCmdGroup list ->
+            List.map flattenAudioCmd list |> List.concat
+
+
+encodeAudioCmd : Model userMsg userModel -> AudioCmd userMsg -> ( Model userMsg userModel, JE.Value )
+encodeAudioCmd (Model model) audioCmd =
+    let
+        flattenedAudioCmd : List (AudioLoadRequest_ userMsg)
+        flattenedAudioCmd =
+            flattenAudioCmd audioCmd
+
+        newPendingRequests : List ( Int, AudioLoadRequest_ userMsg )
+        newPendingRequests =
+            flattenedAudioCmd |> List.indexedMap Tuple.pair
+    in
+    ( { model
+        | requestCount = model.requestCount + List.length flattenedAudioCmd
+        , pendingRequests = Dict.union model.pendingRequests (Dict.fromList newPendingRequests)
+      }
+        |> Model
+    , newPendingRequests
+        |> List.map (\( index, value ) -> encodeAudioLoadRequest (model.requestCount + index) value)
+        |> JE.list identity
+    )
+
+
+encodeAudioLoadRequest : Int -> AudioLoadRequest_ msg -> JE.Value
+encodeAudioLoadRequest index audioLoad =
+    JE.object
+        [ ( "audioUrl", JE.string audioLoad.audioUrl )
+        , ( "requestId", JE.int index )
+        ]
 
 
 encodeFlattenedAudio : FlattenedAudio -> JE.Value
 encodeFlattenedAudio flattenedAudio =
     JE.object
         [ ( "source", encodeAudioSource flattenedAudio.source )
-        , ( "startTime", JE.float (Duration.inMilliseconds flattenedAudio.startTime) )
+        , ( "startTime", JE.int (Time.posixToMillis flattenedAudio.startTime) )
         , ( "endTime"
           , case flattenedAudio.endTime of
                 Just endTime ->
@@ -339,9 +572,6 @@ encodeFlattenedAudio flattenedAudio =
         , ( "startAt", JE.float (Duration.inMilliseconds flattenedAudio.startAt) )
         , ( "volume"
           , flattenedAudio.volume |> Quantity.sortBy .startTime |> JE.list encodeVolumeEffect
-          )
-        , ( "playbackRate"
-          , flattenedAudio.playbackRate |> Quantity.sortBy .startTime |> JE.list encodePlaybackRateEffect
           )
         ]
 
@@ -362,29 +592,22 @@ encodePlaybackRateEffect { startTime, scaleBy } =
         ]
 
 
-encodeAudioSource : AudioSource -> JE.Value
+encodeAudioSource : Source -> JE.Value
 encodeAudioSource audioSource =
     case audioSource of
-        AudioFile audioFile ->
+        File audioFile ->
             JE.object
                 [ ( "type", JE.int 0 )
-                , ( "id", JE.int audioFile.id )
-                ]
-
-        SineWave { frequency } ->
-            JE.object
-                [ ( "type", JE.int 1 )
-                , ( "frequency", JE.float frequency )
+                , ( "bufferId", JE.int audioFile.bufferId )
                 ]
 
 
 type alias FlattenedAudio =
-    { source : AudioSource
-    , startTime : Duration
+    { source : Source
+    , startTime : Time.Posix
     , endTime : Maybe Duration
     , startAt : Duration
     , volume : List { scaleBy : Float, startTime : Duration }
-    , playbackRate : List { scaleBy : Float, startTime : Duration }
     }
 
 
@@ -394,13 +617,12 @@ flattenAudio audio_ =
         Group group_ ->
             group_ |> List.map flattenAudio |> List.concat
 
-        BasicAudio { source, startTime, endTime, startAt } ->
+        BasicAudio { source, startTime, settings } ->
             [ { source = source
               , startTime = startTime
-              , endTime = endTime
-              , startAt = startAt
+              , endTime = settings.endTime
+              , startAt = settings.offset
               , volume = []
-              , playbackRate = []
               }
             ]
 
@@ -408,50 +630,67 @@ flattenAudio audio_ =
             case effect.effectType of
                 ScaleVolume scaleVolume_ ->
                     List.map
-                        (\{ source, startTime, endTime, startAt, volume, playbackRate } ->
+                        (\{ source, startTime, endTime, startAt, volume } ->
                             { source = source
                             , startTime = startTime
                             , endTime = endTime
                             , startAt = startAt
                             , volume = scaleVolume_ :: volume
-                            , playbackRate = playbackRate
-                            }
-                        )
-                        (flattenAudio effect.audio)
-
-                ScalePlaybackRate scalePlaybackRate ->
-                    List.map
-                        (\{ source, startTime, endTime, startAt, volume, playbackRate } ->
-                            { source = source
-                            , startTime = startTime
-                            , endTime = endTime
-                            , startAt = startAt
-                            , volume = volume
-                            , playbackRate = scalePlaybackRate :: playbackRate
                             }
                         )
                         (flattenAudio effect.audio)
 
 
+{-| Some kind of sound we want to play. To create `Audio` start with `audio`.
+-}
 type Audio
     = Group (List Audio)
-    | BasicAudio { source : AudioSource, startTime : Duration, endTime : Maybe Duration, startAt : Duration }
+    | BasicAudio { source : Source, startTime : Time.Posix, settings : PlayAudioConfig }
     | Effect { effectType : EffectType, audio : Audio }
 
 
+{-| An effect we can apply to our sound such as changing the volume.
+-}
 type EffectType
     = ScaleVolume { scaleBy : Float, startTime : Duration }
-    | ScalePlaybackRate { scaleBy : Float, startTime : Duration }
 
 
-type AudioSource
-    = AudioFile { id : Int }
-    | SineWave { frequency : Float }
+type Source
+    = File { bufferId : Int, duration : Duration }
 
 
-audio : AudioSource -> Duration -> Maybe Duration -> Duration -> Audio
-audio source startTime endTime startAt =
-    BasicAudio { source = source, startTime = startTime, endTime = endTime, startAt = startAt }
+{-| How long an audio source plays for.
+-}
+sourceDuration : Source -> Duration
+sourceDuration (File source) =
+    source.duration
+
+
+audioSourceBufferId (File audioSource) =
+    audioSource.bufferId
+
+
+{-| Extra settings when playing audio from a file.
+-}
+type alias PlayAudioConfig =
+    { endTime : Maybe Duration
+    , offset : Duration
+    , loop : Maybe { loopStart : Duration, loopEnd : Duration }
+    }
+
+
+{-| Play audio from an audio source at a given time.
+-}
+audio : Source -> Time.Posix -> Audio
+audio source startTime =
+    audioWithConfig source startTime { endTime = Nothing, offset = Quantity.zero, loop = Nothing }
+
+
+{-| Play audio from an audio source at a given time with config.
+-}
+audioWithConfig : Source -> Time.Posix -> PlayAudioConfig -> Audio
+audioWithConfig source startTime audioSettings =
+    BasicAudio { source = source, startTime = startTime, settings = audioSettings }
 
 
 scaleVolume : Float -> Audio -> Audio
@@ -464,30 +703,25 @@ scaleVolumeAt scaleBy startTime audio_ =
     Effect { effectType = ScaleVolume { scaleBy = scaleBy, startTime = startTime }, audio = audio_ }
 
 
-scalePlaybackRateAt : Float -> Duration -> Audio -> Audio
-scalePlaybackRateAt scaleBy startTime audio_ =
-    Effect { effectType = ScalePlaybackRate { scaleBy = scaleBy, startTime = startTime }, audio = audio_ }
-
-
 group : List Audio -> Audio
 group audios =
     Group audios
 
 
+{-| The sound of no sound at all.
+-}
 silence : Audio
 silence =
     group []
 
 
-type Error
-    = AudioLoadingRelatedErrors
+type LoadError
+    = MediaDecodeAudioDataUnknownContentType
+    | NetworkError
 
 
-loadAudio : String -> Task Error (AudioSource -> msg)
-loadAudio url =
-    Debug.todo ""
-
-
-sineWave : Float -> AudioSource
-sineWave frequency =
-    SineWave { frequency = frequency }
+{-| Load audio from a url.
+-}
+loadAudio : (Result LoadError Source -> msg) -> String -> AudioCmd msg
+loadAudio userMsg url =
+    AudioLoadRequest { userMsg = userMsg, audioUrl = url }
