@@ -17,6 +17,7 @@
         "elm/url": "1.0.0 <= v < 2.0.0",
         "elm-community/list-extra": "8.2.3 <= v < 9.0.0",
         "ianmackenzie/elm-units": "2.2.0 <= v < 3.0.0",
+        "mgold/elm-nonempty-list": "4.1.0 <= v < 5.0.0",
         "pzp1997/assoc-list": "1.0.0 <= v < 2.0.0"
     },
     "test-dependencies": {

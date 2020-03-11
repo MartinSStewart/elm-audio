@@ -4,6 +4,7 @@ module Audio exposing
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , Model, Msg
+    , lamderaFrontendWithAudio
     )
 
 {-|
