@@ -1,66 +1,52 @@
 module Audio exposing
-    ( Audio
-    , AudioCmd
-    , LoadError(..)
-    , Model
-    , Msg
-    , Source(..)
-    , applicationWithAudio
-    , audio
-    , cmdBatch
-    , cmdNone
-    , documentWithAudio
-    , elementWithAudio
-    , group
-    , loadAudio
-    , scaleVolume
-    , scaleVolumeAt
-    , silence
-    , sourceDuration
+    ( elementWithAudio, documentWithAudio, applicationWithAudio
+    , AudioCmd, loadAudio, LoadError(..), Source, cmdBatch, cmdNone, sourceDuration
+    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+    , scaleVolume, scaleVolumeAt
+    , Model, Msg
     )
 
-{- Basic idea for an audio package.
+{-|
 
-   The foundational idea here is that:
 
-   1. Audio is like a view function.
-   It's takes a model and returns a collection of sounds that should be playing.
-   If a sound effect stops being returned from our audio function then it stops playing.
-   2. It should be configurable enough that the user doesn't need to say what sounds should be playing 60 times per second.
-   For example, `audio` lets us choose when a sound effect should play rather than needing to wait until that exact moment.
+# Applications
 
-   Example usage:
+Create an Elm app that supports playing audio.
 
-   import Audio exposing (..)
+@docs elementWithAudio, documentWithAudio, applicationWithAudio
 
-   type alias Model =
-       { damageSoundEffect : AudioSource
-       , playerLastDamaged : Maybe Time.Posix
-       , backgroundMusic : AudioSource
-       }
 
-   damageSoundEffectDuration = 2000
+# Load audio
 
-   audio : Model -> Audio
-   audio model =
-        group
-            [ audio model.backgroundMusic (MillisecondsSinceAppStart 0) Nothing 0
-            , case model.playerLastDamaged of
-                Just playerLastDamaged ->
-                    audio model.damageSoundEffect (AbsoluteTime playerLastDamaged) damageSoundEffectDuration 0
+Load audio so you can later play it.
 
-                Nothing ->
-                    silence
-            ]
+@docs AudioCmd, loadAudio, LoadError, Source, cmdBatch, cmdNone, sourceDuration
 
-    main =
-        elementWithAudio
-            { init = Debug.todo ""
-            , view = Debug.todo ""
-            , update = Debug.todo ""
-            , subscriptions = Debug.todo ""
-            , audio = audio
-            }
+
+# Play audio
+
+Define what audio should be playing.
+
+@docs Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+
+
+# Audio effects
+
+Effects you can apply to `Audio`.
+
+@docs scaleVolume, scaleVolumeAt
+
+
+# Internal stuff
+
+@docs Model, Msg
+
+
+# Lamdera stuff
+
+WIP support for Lamdera. Ignore this for now.
+
+@docs lamderaFrontendWithAudio
 
 -}
 
@@ -72,6 +58,7 @@ import Html exposing (Html)
 import Json.Decode as JD
 import Json.Encode as JE
 import List.Extra as List
+import List.Nonempty
 import Quantity exposing (Quantity, Rate, Unitless)
 import Time
 import Url exposing (Url)
@@ -82,8 +69,13 @@ type Model userMsg userModel
     = Model (Model_ userMsg userModel)
 
 
+type alias NodeGroupId =
+    Int
+
+
 type alias Model_ userMsg userModel =
-    { audioState : Audio
+    { audioState : Dict NodeGroupId FlattenedAudio
+    , nodeGroupIdCounter : Int
     , userModel : userModel
     , requestCount : Int
     , pendingRequests : Dict Int (AudioLoadRequest_ userMsg)
@@ -98,7 +90,7 @@ type Msg userMsg
 
 
 type FromJSMsg
-    = AudioLoadSuccess { requestId : Int, bufferId : Int, duration : Duration }
+    = AudioLoadSuccess { requestId : Int, bufferId : BufferId, duration : Duration }
     | AudioLoadFailed { requestId : Int, error : LoadError }
     | InitAudioContext { samplesPerSecond : Int }
     | JsonParseError { error : String }
@@ -274,22 +266,24 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
         ( newUserModel, userCmd, audioCmds ) =
             userUpdate model.userModel
 
-        newAudioState =
-            audioFunc newUserModel
-
-        diff =
-            diffAudioState model.audioState newAudioState
+        ( audioState, newNodeGroupIdCounter, json ) =
+            diffAudioState model.nodeGroupIdCounter model.audioState (audioFunc newUserModel)
 
         newModel : Model userMsg userModel
         newModel =
-            Model { model | audioState = newAudioState, userModel = newUserModel }
+            Model
+                { model
+                    | audioState = audioState
+                    , nodeGroupIdCounter = newNodeGroupIdCounter
+                    , userModel = newUserModel
+                }
 
         ( newModel2, audioRequests ) =
             audioCmds |> encodeAudioCmd newModel
 
         portMessage =
             JE.object
-                [ ( "audio", diff )
+                [ ( "audio", JE.list identity json )
                 , ( "audioCmds", audioRequests )
                 ]
     in
@@ -305,16 +299,13 @@ initHelper :
     -> ( Model userMsg model, Cmd (Msg userMsg) )
 initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     let
-        newAudioState : Audio
-        newAudioState =
-            audioFunc model
-
-        diff =
-            diffAudioState silence newAudioState
+        ( audioState, newNodeGroupIdCounter, json ) =
+            diffAudioState 0 Dict.empty (audioFunc model)
 
         initialModel =
             Model
-                { audioState = newAudioState
+                { audioState = audioState
+                , nodeGroupIdCounter = newNodeGroupIdCounter
                 , userModel = model
                 , requestCount = 0
                 , pendingRequests = Dict.empty
@@ -327,7 +318,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
         portMessage : JE.Value
         portMessage =
             JE.object
-                [ ( "audio", diff )
+                [ ( "audio", JE.list identity json )
                 , ( "audioCmds", audioRequests )
                 ]
     in
@@ -395,7 +386,7 @@ update app msg (Model model) =
                     ( Model { model | samplesPerSecond = Just samplesPerSecond }, Cmd.none )
 
                 JsonParseError { error } ->
-                    Debug.todo error
+                    ( Model model, Cmd.none )
 
 
 subscriptions :
@@ -442,7 +433,7 @@ decodeFromJSMsg =
                                     }
                             )
                             (JD.field "requestId" JD.int)
-                            (JD.field "bufferId" JD.int)
+                            (JD.field "bufferId" decodeBufferId)
                             (JD.field "durationInSeconds" JD.float)
 
                     2 ->
@@ -464,56 +455,192 @@ fromJSPortSub json =
             FromJSMsg (JsonParseError { error = JD.errorToString error })
 
 
-diffAudioState : Audio -> Audio -> JE.Value
-diffAudioState oldAudio newAudio =
+type BufferId
+    = BufferId Int
+
+
+encodeBufferId (BufferId bufferId) =
+    JE.int bufferId
+
+
+decodeBufferId =
+    JD.int |> JD.map BufferId
+
+
+updateAudioState :
+    ( NodeGroupId, FlattenedAudio )
+    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
+    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
+updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json ) =
     let
-        flattenedOldAudio =
-            flattenAudio oldAudio
-
-        flattenedNewAudio : List FlattenedAudio
-        flattenedNewAudio =
-            flattenAudio newAudio
-
-        getDict =
-            List.gatherEqualsBy (\audio_ -> audioSourceBufferId audio_.source)
-                >> List.map (\( audio_, rest ) -> ( audioSourceBufferId audio_.source, audio_ :: rest ))
-                >> Dict.fromList
+        validAudio : List ( Int, FlattenedAudio )
+        validAudio =
+            flattenedAudio
+                |> List.indexedMap Tuple.pair
+                |> List.filter
+                    (\( _, a ) ->
+                        (a.source == audioGroup.source)
+                            && (a.startTime == audioGroup.startTime)
+                            && (a.startAt == audioGroup.startAt)
+                    )
     in
-    Dict.merge
-        (\bufferId oldValues result -> diffLists bufferId oldValues [] ++ result)
-        (\bufferId oldValues newValues result -> diffLists bufferId oldValues newValues ++ result)
-        (\bufferId newValues result -> diffLists bufferId [] newValues ++ result)
-        (getDict flattenedOldAudio)
-        (getDict flattenedNewAudio)
-        []
-        |> JE.list identity
+    case List.find (\( _, a ) -> a == audioGroup) validAudio of
+        Just ( index, _ ) ->
+            -- We found a perfect match so nothing needs to change.
+            ( List.removeAt index flattenedAudio, audioState, json )
+
+        Nothing ->
+            case validAudio of
+                ( index, a ) :: _ ->
+                    let
+                        encodeValue getter encoder =
+                            if getter audioGroup == getter a then
+                                Nothing
+
+                            else
+                                encoder nodeGroupId (getter a) |> Just
+
+                        effects =
+                            [ encodeValue .volume encodeSetVolume
+                            , encodeValue .loop encodeSetLoopConfig
+                            , encodeValue .playbackRate encodeSetPlaybackRate
+                            , encodeValue .volumeTimelines encodeSetVolumeAt
+                            ]
+                                |> List.filterMap identity
+                    in
+                    -- We found audio that has the same bufferId and startTime but some other settings have changed.
+                    ( List.removeAt index flattenedAudio
+                    , Dict.insert nodeGroupId a audioState
+                    , effects ++ json
+                    )
+
+                [] ->
+                    -- We didn't find any audio with the same bufferId and startTime so we'll stop this sound.
+                    ( flattenedAudio
+                    , Dict.remove nodeGroupId audioState
+                    , encodeStopSound nodeGroupId :: json
+                    )
 
 
-diffLists : Int -> List FlattenedAudio -> List FlattenedAudio -> List JE.Value
-diffLists bufferId oldValues newValues =
-    if oldValues == newValues then
-        []
+diffAudioState : Int -> Dict NodeGroupId FlattenedAudio -> Audio -> ( Dict NodeGroupId FlattenedAudio, Int, List JE.Value )
+diffAudioState nodeGroupIdCounter audioState newAudio =
+    let
+        ( newAudioLeft, newAudioState, json2 ) =
+            Dict.toList audioState
+                |> List.foldl updateAudioState
+                    ( flattenAudio newAudio, audioState, [] )
 
-    else
-        [ oldValues
-            |> List.map
-                (\oldValue ->
-                    JE.object
-                        [ ( "bufferId", JE.int bufferId )
-                        , ( "action", JE.string "stopSound" )
-                        ]
-                )
-        , newValues
-            |> List.map
-                (\newValue ->
-                    JE.object
-                        [ ( "bufferId", JE.int bufferId )
-                        , ( "action", JE.string "startSound" )
-                        , ( "startTime", JE.int (Time.posixToMillis newValue.startTime) )
-                        ]
-                )
+        ( newNodeGroupIdCounter, newAudioState2, json3 ) =
+            newAudioLeft
+                |> List.foldl
+                    (\audioLeft ( counter, audioState_, json_ ) ->
+                        ( counter + 1
+                        , Dict.insert counter audioLeft audioState_
+                        , encodeStartSound counter audioLeft :: json_
+                        )
+                    )
+                    ( nodeGroupIdCounter, newAudioState, json2 )
+    in
+    ( newAudioState2, newNodeGroupIdCounter, json3 )
+
+
+encodeStartSound : NodeGroupId -> FlattenedAudio -> JE.Value
+encodeStartSound nodeGroupId audio_ =
+    JE.object
+        [ ( "action", JE.string "startSound" )
+        , ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "bufferId", audioSourceBufferId audio_.source |> encodeBufferId )
+        , ( "startTime", audio_.startTime |> encodeTime )
+        , ( "startAt", audio_.startAt |> encodeDuration )
+        , ( "volume", JE.float audio_.volume )
+        , ( "volumeTimelines", JE.list encodeVolumeTimeline audio_.volumeTimelines )
+        , ( "loop", encodeLoopConfig audio_.loop )
+        , ( "playbackRate", JE.float audio_.playbackRate )
         ]
-            |> List.concat
+
+
+encodeTime : Time.Posix -> JE.Value
+encodeTime =
+    Time.posixToMillis >> JE.int
+
+
+encodeDuration : Duration -> JE.Value
+encodeDuration =
+    Duration.inMilliseconds >> JE.float
+
+
+encodeStopSound : NodeGroupId -> JE.Value
+encodeStopSound nodeGroupId =
+    JE.object
+        [ ( "action", JE.string "stopSound" )
+        , ( "nodeGroupId", JE.int nodeGroupId )
+        ]
+
+
+encodeSetVolume : NodeGroupId -> Float -> JE.Value
+encodeSetVolume nodeGroupId volume =
+    JE.object
+        [ ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "action", JE.string "setVolume" )
+        , ( "volume", JE.float volume )
+        ]
+
+
+encodeSetLoopConfig : NodeGroupId -> Maybe LoopConfig -> JE.Value
+encodeSetLoopConfig nodeGroupId loop =
+    JE.object
+        [ ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "action", JE.string "setLoopConfig" )
+        , ( "loop", encodeLoopConfig loop )
+        ]
+
+
+encodeSetPlaybackRate : NodeGroupId -> Float -> JE.Value
+encodeSetPlaybackRate nodeGroupId playbackRate =
+    JE.object
+        [ ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "action", JE.string "setPlaybackRate" )
+        , ( "playbackRate", JE.float playbackRate )
+        ]
+
+
+type alias VolumeTimeline =
+    List.Nonempty.Nonempty ( Time.Posix, Float )
+
+
+encodeSetVolumeAt : NodeGroupId -> List VolumeTimeline -> JE.Value
+encodeSetVolumeAt nodeGroupId volumeTimelines =
+    JE.object
+        [ ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "action", JE.string "setVolumeAt" )
+        , ( "volumeAt", JE.list encodeVolumeTimeline volumeTimelines )
+        ]
+
+
+encodeVolumeTimeline : VolumeTimeline -> JE.Value
+encodeVolumeTimeline volumeTimeline =
+    volumeTimeline
+        |> List.Nonempty.toList
+        |> JE.list
+            (\( time, volume ) ->
+                JE.object
+                    [ ( "time", encodeTime time )
+                    , ( "volume", JE.float volume )
+                    ]
+            )
+
+
+encodeLoopConfig : Maybe LoopConfig -> JE.Value
+encodeLoopConfig maybeLoop =
+    case maybeLoop of
+        Just loop ->
+            JE.object
+                [ ( "loopStart", encodeDuration loop.loopStart )
+                , ( "loopEnd", encodeDuration loop.loopEnd )
+                ]
+
+        Nothing ->
+            JE.null
 
 
 flattenAudioCmd : AudioCmd msg -> List (AudioLoadRequest_ msg)
@@ -556,58 +683,14 @@ encodeAudioLoadRequest index audioLoad =
         ]
 
 
-encodeFlattenedAudio : FlattenedAudio -> JE.Value
-encodeFlattenedAudio flattenedAudio =
-    JE.object
-        [ ( "source", encodeAudioSource flattenedAudio.source )
-        , ( "startTime", JE.int (Time.posixToMillis flattenedAudio.startTime) )
-        , ( "endTime"
-          , case flattenedAudio.endTime of
-                Just endTime ->
-                    JE.float (Duration.inMilliseconds endTime)
-
-                Nothing ->
-                    JE.null
-          )
-        , ( "startAt", JE.float (Duration.inMilliseconds flattenedAudio.startAt) )
-        , ( "volume"
-          , flattenedAudio.volume |> Quantity.sortBy .startTime |> JE.list encodeVolumeEffect
-          )
-        ]
-
-
-encodeVolumeEffect : { startTime : Duration, scaleBy : Float } -> JE.Value
-encodeVolumeEffect { startTime, scaleBy } =
-    JE.object
-        [ ( "startTime", JE.float (Duration.inMilliseconds startTime) )
-        , ( "scaleBy", JE.float scaleBy )
-        ]
-
-
-encodePlaybackRateEffect : { startTime : Duration, scaleBy : Float } -> JE.Value
-encodePlaybackRateEffect { startTime, scaleBy } =
-    JE.object
-        [ ( "startTime", JE.float (Duration.inMilliseconds startTime) )
-        , ( "scaleBy", JE.float scaleBy )
-        ]
-
-
-encodeAudioSource : Source -> JE.Value
-encodeAudioSource audioSource =
-    case audioSource of
-        File audioFile ->
-            JE.object
-                [ ( "type", JE.int 0 )
-                , ( "bufferId", JE.int audioFile.bufferId )
-                ]
-
-
 type alias FlattenedAudio =
     { source : Source
     , startTime : Time.Posix
-    , endTime : Maybe Duration
     , startAt : Duration
-    , volume : List { scaleBy : Float, startTime : Duration }
+    , volume : Float
+    , volumeTimelines : List (List.Nonempty.Nonempty ( Time.Posix, Float ))
+    , loop : Maybe LoopConfig
+    , playbackRate : Float
     }
 
 
@@ -620,9 +703,11 @@ flattenAudio audio_ =
         BasicAudio { source, startTime, settings } ->
             [ { source = source
               , startTime = startTime
-              , endTime = settings.endTime
-              , startAt = settings.offset
-              , volume = []
+              , startAt = settings.startAt
+              , volume = 1
+              , volumeTimelines = []
+              , loop = settings.loop
+              , playbackRate = settings.playbackRate
               }
             ]
 
@@ -630,14 +715,12 @@ flattenAudio audio_ =
             case effect.effectType of
                 ScaleVolume scaleVolume_ ->
                     List.map
-                        (\{ source, startTime, endTime, startAt, volume } ->
-                            { source = source
-                            , startTime = startTime
-                            , endTime = endTime
-                            , startAt = startAt
-                            , volume = scaleVolume_ :: volume
-                            }
-                        )
+                        (\a -> { a | volume = scaleVolume_.scaleBy * a.volume })
+                        (flattenAudio effect.audio)
+
+                ScaleVolumeAt { volumeAt } ->
+                    List.map
+                        (\a -> { a | volumeTimelines = volumeAt :: a.volumeTimelines })
                         (flattenAudio effect.audio)
 
 
@@ -652,14 +735,16 @@ type Audio
 {-| An effect we can apply to our sound such as changing the volume.
 -}
 type EffectType
-    = ScaleVolume { scaleBy : Float, startTime : Duration }
+    = ScaleVolume { scaleBy : Float }
+    | ScaleVolumeAt { volumeAt : List.Nonempty.Nonempty ( Time.Posix, Float ) }
 
 
+{-| -}
 type Source
-    = File { bufferId : Int, duration : Duration }
+    = File { bufferId : BufferId, duration : Duration }
 
 
-{-| How long an audio source plays for.
+{-| Get how long an audio source plays for.
 -}
 sourceDuration : Source -> Duration
 sourceDuration (File source) =
@@ -673,36 +758,81 @@ audioSourceBufferId (File audioSource) =
 {-| Extra settings when playing audio from a file.
 -}
 type alias PlayAudioConfig =
-    { endTime : Maybe Duration
-    , offset : Duration
-    , loop : Maybe { loopStart : Duration, loopEnd : Duration }
+    { loop : Maybe LoopConfig
+    , playbackRate : Float
+    , startAt : Duration
     }
 
 
-{-| Play audio from an audio source at a given time.
+{-| Default config used for `audioWithConfig`.
+-}
+audioDefaultConfig : PlayAudioConfig
+audioDefaultConfig =
+    { loop = Nothing
+    , playbackRate = 1
+    , startAt = Quantity.zero
+    }
+
+
+{-| Control how audio loops. `loopEnd` defines where (relative to the start of the audio) the audio should loop and `loopStart` where it should loop to.
+
+    -- Here we have a song that plays an intro once and then loops between the 10 second point and the end of the song.
+    let
+        default =
+            Audio.audioDefaultConfig
+
+        songLength =
+            Audio.sourceDuration coolBackgroundMusic
+    in
+    audioWithConfig
+        { default | loop = Just { loopStart = Duration.seconds 10, loopEnd = songLength } }
+        coolBackgroundMusic
+        startTime
+
+-}
+type alias LoopConfig =
+    { loopStart : Duration, loopEnd : Duration }
+
+
+{-| Play audio from an audio source at a given time. This is the same as using `audioWithConfig audioDefaultConfig`.
 -}
 audio : Source -> Time.Posix -> Audio
 audio source startTime =
-    audioWithConfig source startTime { endTime = Nothing, offset = Quantity.zero, loop = Nothing }
+    audioWithConfig audioDefaultConfig source startTime
 
 
 {-| Play audio from an audio source at a given time with config.
 -}
-audioWithConfig : Source -> Time.Posix -> PlayAudioConfig -> Audio
-audioWithConfig source startTime audioSettings =
+audioWithConfig : PlayAudioConfig -> Source -> Time.Posix -> Audio
+audioWithConfig audioSettings source startTime =
     BasicAudio { source = source, startTime = startTime, settings = audioSettings }
 
 
+{-| Scale how loud a given `Audio` is. If the the volume is less than 0, 0 will be used instead.
+-}
 scaleVolume : Float -> Audio -> Audio
 scaleVolume scaleBy audio_ =
-    Effect { effectType = ScaleVolume { scaleBy = scaleBy, startTime = Quantity.zero }, audio = audio_ }
+    Effect { effectType = ScaleVolume { scaleBy = max 0 scaleBy }, audio = audio_ }
 
 
-scaleVolumeAt : Float -> Duration -> Audio -> Audio
-scaleVolumeAt scaleBy startTime audio_ =
-    Effect { effectType = ScaleVolume { scaleBy = scaleBy, startTime = startTime }, audio = audio_ }
+{-| Scale how loud a given `Audio` is given points in time. The volume will transition linearly between those points.
+-}
+scaleVolumeAt : VolumeTimeline -> Audio -> Audio
+scaleVolumeAt volumeAt audio_ =
+    Effect
+        { effectType =
+            ScaleVolumeAt
+                { volumeAt =
+                    volumeAt
+                        |> List.Nonempty.map (Tuple.mapSecond (max 0))
+                        |> List.Nonempty.sortBy (Tuple.first >> Time.posixToMillis)
+                }
+        , audio = audio_
+        }
 
 
+{-| Combine multiple `Audio`s into a single `Audio`.
+-}
 group : List Audio -> Audio
 group audios =
     Group audios
@@ -715,6 +845,8 @@ silence =
     group []
 
 
+{-| Possible errors we can get when loading audio files.
+-}
 type LoadError
     = MediaDecodeAudioDataUnknownContentType
     | NetworkError
