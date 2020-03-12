@@ -52,7 +52,6 @@ import Duration exposing (Duration)
 import Html exposing (Html)
 import Json.Decode as JD
 import Json.Encode as JE
-import List.Extra as List
 import List.Nonempty as Nonempty exposing (Nonempty)
 import Quantity exposing (Quantity, Rate, Unitless)
 import Time
@@ -341,7 +340,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     )
 
 
-{-| Borrowed from List.Extra
+{-| Borrowed from List.Extra so we don't need to depend on the entire package.
 -}
 find : (a -> Bool) -> List a -> Maybe a
 find predicate list =
@@ -355,6 +354,29 @@ find predicate list =
 
             else
                 find predicate rest
+
+
+{-| Borrowed from List.Extra so we don't need to depend on the entire package.
+-}
+removeAt : Int -> List a -> List a
+removeAt index l =
+    if index < 0 then
+        l
+
+    else
+        let
+            head =
+                List.take index l
+
+            tail =
+                List.drop index l |> List.tail
+        in
+        case tail of
+            Nothing ->
+                l
+
+            Just t ->
+                List.append head t
 
 
 update :
@@ -535,10 +557,10 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                             && (a.startAt == audioGroup.startAt)
                     )
     in
-    case List.find (\( _, a ) -> a == audioGroup) validAudio of
+    case find (\( _, a ) -> a == audioGroup) validAudio of
         Just ( index, _ ) ->
             -- We found a perfect match so nothing needs to change.
-            ( List.removeAt index flattenedAudio, audioState, json )
+            ( removeAt index flattenedAudio, audioState, json )
 
         Nothing ->
             case validAudio of
@@ -560,7 +582,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                                 |> List.filterMap identity
                     in
                     -- We found audio that has the same bufferId and startTime but some other settings have changed.
-                    ( List.removeAt index flattenedAudio
+                    ( removeAt index flattenedAudio
                     , Dict.insert nodeGroupId a audioState
                     , effects ++ json
                     )
