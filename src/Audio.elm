@@ -20,7 +20,7 @@ Create an Elm app that supports playing audio.
 
 Load audio so you can later play it.
 
-@docs AudioCmd, loadAudio, LoadError, Source, cmdBatch, cmdNone, sourceDuration
+@docs AudioCmd, loadAudio, LoadError, Source, cmdBatch, cmdNone
 
 
 # Play audio
