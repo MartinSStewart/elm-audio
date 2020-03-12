@@ -1,9 +1,8 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio
-    , AudioCmd, loadAudio, LoadError(..), Source, cmdBatch, cmdNone, sourceDuration
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Program
+    , AudioCmd, loadAudio, LoadError(..), Source, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
-    , Model, Msg
     , lamderaFrontendWithAudio
     )
 
@@ -14,7 +13,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Program
 
 
 # Load audio
@@ -38,11 +37,6 @@ Effects you can apply to `Audio`.
 @docs scaleVolume, scaleVolumeAt
 
 
-# Internal stuff
-
-@docs Model, Msg
-
-
 # Lamdera stuff
 
 WIP support for Lamdera. Ignore this for now.
@@ -59,13 +53,18 @@ import Html exposing (Html)
 import Json.Decode as JD
 import Json.Encode as JE
 import List.Extra as List
-import List.Nonempty
+import List.Nonempty as Nonempty exposing (Nonempty)
 import Quantity exposing (Quantity, Rate, Unitless)
 import Time
 import Url exposing (Url)
 
 
-{-| -}
+{-| Alias for Platform.Program
+-}
+type alias Program flags userModel userMsg =
+    Platform.Program flags (Model userMsg userModel) (Msg userMsg)
+
+
 type Model userMsg userModel
     = Model (Model_ userMsg userModel)
 
@@ -84,7 +83,6 @@ type alias Model_ userMsg userModel =
     }
 
 
-{-| -}
 type Msg userMsg
     = FromJSMsg FromJSMsg
     | UserMsg userMsg
@@ -98,7 +96,7 @@ type FromJSMsg
 
 
 type alias AudioLoadRequest_ userMsg =
-    { userMsg : Result LoadError Source -> userMsg, audioUrl : String }
+    { userMsg : Nonempty ( Result LoadError Source, userMsg ), audioUrl : String }
 
 
 {-| An audio command.
@@ -122,6 +120,21 @@ cmdNone =
     AudioCmdGroup []
 
 
+{-| Map a command from one type to another. Conceptually the same as Cmd.map
+-}
+cmdMap : (a -> b) -> AudioCmd a -> AudioCmd b
+cmdMap map cmd =
+    case cmd of
+        AudioLoadRequest audioLoadRequest_ ->
+            { userMsg = Nonempty.map (Tuple.mapSecond map) audioLoadRequest_.userMsg
+            , audioUrl = audioLoadRequest_.audioUrl
+            }
+                |> AudioLoadRequest
+
+        AudioCmdGroup audioCmds ->
+            audioCmds |> List.map (cmdMap map) |> AudioCmdGroup
+
+
 {-| Ports that allows this package to communicate with the JS portion of the package.
 -}
 type alias Ports msg =
@@ -143,7 +156,7 @@ elementWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags (Model msg model) (Msg msg)
+    -> Program flags model msg
 elementWithAudio app =
     { init = app.init >> initHelper app.audioPort.toJS app.audio
     , view = getUserModel >> app.view >> Html.map UserMsg
@@ -163,7 +176,7 @@ documentWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags (Model msg model) (Msg msg)
+    -> Program flags model msg
 documentWithAudio app =
     { init = app.init >> initHelper app.audioPort.toJS app.audio
     , view =
@@ -193,7 +206,7 @@ applicationWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags (Model msg model) (Msg msg)
+    -> Program flags model msg
 applicationWithAudio app =
     { init = \flags url key -> app.init flags url key |> initHelper app.audioPort.toJS app.audio
     , view =
@@ -328,6 +341,22 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     )
 
 
+{-| Borrowed from List.Extra
+-}
+find : (a -> Bool) -> List a -> Maybe a
+find predicate list =
+    case list of
+        [] ->
+            Nothing
+
+        first :: rest ->
+            if predicate first then
+                Just first
+
+            else
+                find predicate rest
+
+
 update :
     { a
         | audioPort : Ports userMsg
@@ -348,20 +377,28 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
-                                userMsg =
-                                    { bufferId = bufferId
-                                    , duration = duration
-                                    }
-                                        |> File
-                                        |> Ok
-                                        |> pendingRequest.userMsg
+                                a =
+                                    { bufferId = bufferId } |> File |> Ok
+
+                                b =
+                                    Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
                             in
-                            { model | pendingRequests = Dict.remove requestId model.pendingRequests }
-                                |> Model
-                                |> updateHelper
-                                    app.audioPort.toJS
-                                    app.audio
-                                    (app.update userMsg)
+                            case b of
+                                Just ( _, userMsg ) ->
+                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                        |> Model
+                                        |> updateHelper
+                                            app.audioPort.toJS
+                                            app.audio
+                                            (app.update userMsg)
+
+                                Nothing ->
+                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                        |> Model
+                                        |> updateHelper
+                                            app.audioPort.toJS
+                                            app.audio
+                                            (Nonempty.head pendingRequest.userMsg |> Tuple.second |> app.update)
 
                         Nothing ->
                             ( Model model, Cmd.none )
@@ -370,15 +407,28 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
-                                userMsg =
-                                    Err error |> pendingRequest.userMsg
+                                a =
+                                    Err error
+
+                                b =
+                                    Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
                             in
-                            { model | pendingRequests = Dict.remove requestId model.pendingRequests }
-                                |> Model
-                                |> updateHelper
-                                    app.audioPort.toJS
-                                    app.audio
-                                    (app.update userMsg)
+                            case b of
+                                Just ( _, userMsg ) ->
+                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                        |> Model
+                                        |> updateHelper
+                                            app.audioPort.toJS
+                                            app.audio
+                                            (app.update userMsg)
+
+                                Nothing ->
+                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                        |> Model
+                                        |> updateHelper
+                                            app.audioPort.toJS
+                                            app.audio
+                                            (Nonempty.head pendingRequest.userMsg |> Tuple.second |> app.update)
 
                         Nothing ->
                             ( Model model, Cmd.none )
@@ -606,7 +656,7 @@ encodeSetPlaybackRate nodeGroupId playbackRate =
 
 
 type alias VolumeTimeline =
-    List.Nonempty.Nonempty ( Time.Posix, Float )
+    Nonempty ( Time.Posix, Float )
 
 
 encodeSetVolumeAt : NodeGroupId -> List VolumeTimeline -> JE.Value
@@ -621,7 +671,7 @@ encodeSetVolumeAt nodeGroupId volumeTimelines =
 encodeVolumeTimeline : VolumeTimeline -> JE.Value
 encodeVolumeTimeline volumeTimeline =
     volumeTimeline
-        |> List.Nonempty.toList
+        |> Nonempty.toList
         |> JE.list
             (\( time, volume ) ->
                 JE.object
@@ -689,7 +739,7 @@ type alias FlattenedAudio =
     , startTime : Time.Posix
     , startAt : Duration
     , volume : Float
-    , volumeTimelines : List (List.Nonempty.Nonempty ( Time.Posix, Float ))
+    , volumeTimelines : List (Nonempty ( Time.Posix, Float ))
     , loop : Maybe LoopConfig
     , playbackRate : Float
     }
@@ -737,19 +787,12 @@ type Audio
 -}
 type EffectType
     = ScaleVolume { scaleBy : Float }
-    | ScaleVolumeAt { volumeAt : List.Nonempty.Nonempty ( Time.Posix, Float ) }
+    | ScaleVolumeAt { volumeAt : Nonempty ( Time.Posix, Float ) }
 
 
 {-| -}
 type Source
-    = File { bufferId : BufferId, duration : Duration }
-
-
-{-| Get how long an audio source plays for.
--}
-sourceDuration : Source -> Duration
-sourceDuration (File source) =
-    source.duration
+    = File { bufferId : BufferId }
 
 
 audioSourceBufferId (File audioSource) =
@@ -825,8 +868,8 @@ scaleVolumeAt volumeAt audio_ =
             ScaleVolumeAt
                 { volumeAt =
                     volumeAt
-                        |> List.Nonempty.map (Tuple.mapSecond (max 0))
-                        |> List.Nonempty.sortBy (Tuple.first >> Time.posixToMillis)
+                        |> Nonempty.map (Tuple.mapSecond (max 0))
+                        |> Nonempty.sortBy (Tuple.first >> Time.posixToMillis)
                 }
         , audio = audio_
         }
@@ -851,10 +894,21 @@ silence =
 type LoadError
     = MediaDecodeAudioDataUnknownContentType
     | NetworkError
+    | ErrorThatHappensWhenYouLoadMoreThan1000SoundsDueToHackyWorkAroundToMakeThisPackageBehaveMoreLikeAnEffectPackage
+
+
+enumeratedResults : Nonempty (Result LoadError Source)
+enumeratedResults =
+    [ Err MediaDecodeAudioDataUnknownContentType, Err NetworkError ]
+        ++ (List.range 0 1000 |> List.map (\bufferId -> { bufferId = BufferId bufferId } |> File |> Ok))
+        |> Nonempty.Nonempty (Err ErrorThatHappensWhenYouLoadMoreThan1000SoundsDueToHackyWorkAroundToMakeThisPackageBehaveMoreLikeAnEffectPackage)
 
 
 {-| Load audio from a url.
 -}
 loadAudio : (Result LoadError Source -> msg) -> String -> AudioCmd msg
 loadAudio userMsg url =
-    AudioLoadRequest { userMsg = userMsg, audioUrl = url }
+    AudioLoadRequest
+        { userMsg = Nonempty.map (\results -> ( results, userMsg results )) enumeratedResults
+        , audioUrl = url
+        }
