@@ -2,9 +2,8 @@ module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Program
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
-    , scaleVolume, scaleVolumeAt
+    , scaleVolume, scaleVolumeAt, VolumeTimeline
     , lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
-    , VolumeTimeline
     )
 
 {-|
@@ -35,7 +34,7 @@ Define what audio should be playing.
 
 Effects you can apply to `Audio`.
 
-@docs scaleVolume, scaleVolumeAt
+@docs scaleVolume, scaleVolumeAt, VolumeTimeline
 
 
 # Lamdera stuff
