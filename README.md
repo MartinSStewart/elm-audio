@@ -1,15 +1,44 @@
 # elm-audio
 
-This package isn't ready to use. I've published it for now to make it easier to test.
+This package explores the following question:
+
+*What if we could play music and sound effects the same way we render HTML?*
+
+To do that, elm-audio adds a `audio` field to your app. It looks something like this:
+```elm
+audio : Model -> Audio
+audio model =
+    if model.soundOn then
+        Audio.audio model.music model.musicStartTime
+    else
+        Audio.silence
+
+main : Audio.Program flags Model Msg
+main = 
+    Audio.elementWithAudio
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , audio = audio
+        -- Since this is a normal Elm package we need ports to make this all work
+        , audioPorts = audioPorts
+        }
+```
+
+Notice that we don't need to write code to explicitly start and stop our music. We just say what should be playing and when.
 
 ### Getting Started
 
-*TODO*
+Here is a simple [example app](https://github.com/MartinSStewart/elm-audio/tree/master/example) that's a good starting point if you want to begin making something with `elm-audio`.
+
+If you want to see a more interesting use case, I rewrote the audio system in [elm-mogee](https://github.com/MartinSStewart/elm-mogee/tree/elm-audio) to use `elm-audio`.
+
 
 ### JS Setup
 
 In order for this package to work correctly, you'll need to copy the following JS code into your program and then call `startAudio(myElmApp);`
-```
+```javascript
 function startAudio(app)
 {
     window.AudioContext = window.AudioContext || window.webkitAudioContext || false;
