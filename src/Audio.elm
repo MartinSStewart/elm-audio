@@ -4,6 +4,7 @@ module Audio exposing
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
+    , VolumeTimeline
     )
 
 {-|
@@ -723,6 +724,9 @@ encodeSetPlaybackRate nodeGroupId playbackRate =
         ]
 
 
+{-| A nonempty list of (time, volume) points for defining how loud a sound should be at any point in time.
+The points don't need to be sorted but don't include multiple points that have the same time.
+-}
 type alias VolumeTimeline =
     Nonempty ( Time.Posix, Float )
 
@@ -858,7 +862,8 @@ type EffectType
     | ScaleVolumeAt { volumeAt : Nonempty ( Time.Posix, Float ) }
 
 
-{-| -}
+{-| Audio data we can use to play sounds
+-}
 type Source
     = File { bufferId : BufferId }
 
@@ -893,8 +898,9 @@ audioDefaultConfig =
         default =
             Audio.audioDefaultConfig
 
+        -- This package doesn't support getting how long a sound plays for so we need to hard code it instead.
         songLength =
-            Audio.sourceDuration coolBackgroundMusic
+            Duration.seconds 120
     in
     audioWithConfig
         { default | loop = Just { loopStart = Duration.seconds 10, loopEnd = songLength } }
@@ -927,7 +933,33 @@ scaleVolume scaleBy audio_ =
     Effect { effectType = ScaleVolume { scaleBy = max 0 scaleBy }, audio = audio_ }
 
 
-{-| Scale how loud a given `Audio` is given points in time. The volume will transition linearly between those points.
+{-| Scale how loud a given `Audio` is at given points in time. The volume will transition linearly between those points.
+
+    import Audio
+    import List.Nonempty exposing (Nonempty)
+    import Time
+
+
+    -- Here we define a function that fades in audio to full volume and then fades it out until it's muted.
+    --
+    --  1                 ________
+    --                  /         \
+    --  0 ____________/            \_______
+    --     t ->   fade in        fade out
+    fadeInOut fadeInTime fadeOutTime audio =
+        Audio.scaleVolumeAt
+            (Nonempty
+                ( addSeconds -2 fadeInTime, 0 )
+                [ ( fadeInTime, 1 )
+                , ( fadeOutTime, 1 )
+                , ( addSeconds 2 fadeOutTime, 0 )
+                ]
+            )
+            audio
+
+    addSeconds s =
+        Time.posixToMillis >> ((+) s * 1000) >> Time.millisToPosix
+
 -}
 scaleVolumeAt : VolumeTimeline -> Audio -> Audio
 scaleVolumeAt volumeAt audio_ =
