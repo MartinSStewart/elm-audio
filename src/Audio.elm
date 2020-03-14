@@ -1,9 +1,9 @@
 module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Program
-    , AudioCmd, loadAudio, LoadError(..), Source, cmdBatch, cmdNone
+    , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
-    , lamderaFrontendWithAudio
+    , lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
     )
 
 {-|
@@ -20,7 +20,7 @@ Create an Elm app that supports playing audio.
 
 Load audio so you can later play it.
 
-@docs AudioCmd, loadAudio, LoadError, Source, cmdBatch, cmdNone
+@docs AudioCmd, loadAudio, LoadError, Source, cmdMap, cmdBatch, cmdNone
 
 
 # Play audio
@@ -41,7 +41,7 @@ Effects you can apply to `Audio`.
 
 WIP support for Lamdera. Ignore this for now.
 
-@docs lamderaFrontendWithAudio
+@docs lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
 
 -}
 
@@ -266,6 +266,52 @@ lamderaFrontendWithAudio app =
     , onUrlRequest = app.onUrlRequest >> UserMsg
     , onUrlChange = app.onUrlChange >> UserMsg
     }
+
+
+{-| Get the user state stored in `Model`.
+-}
+userModel : Model userMsg userModel -> userModel
+userModel (Model model) =
+    model.userModel
+
+
+{-| Set the user state stored in `Model`. Useful for dealing with migrations in Lamdera.
+-}
+withUserModel : userModelNew -> Model userMsg userModelOld -> Model userMsg userModelNew
+withUserModel userModel_ (Model model) =
+    { userModel = userModel_
+    , nodeGroupIdCounter = model.nodeGroupIdCounter
+    , samplesPerSecond = model.samplesPerSecond
+    , audioState = model.audioState
+    , pendingRequests = model.pendingRequests
+    , requestCount = model.requestCount
+    }
+        |> Model
+
+
+{-| Change the `userMsg` type in `Model`. Useful for dealing with migrations in Lamdera.
+-}
+mapUserMsg : (userMsgOld -> userMsgNew) -> Model userMsgOld userModel -> Model userMsgNew userModel
+mapUserMsg map (Model model) =
+    { userModel = model.userModel
+    , nodeGroupIdCounter = model.nodeGroupIdCounter
+    , samplesPerSecond = model.samplesPerSecond
+    , audioState = model.audioState
+    , pendingRequests =
+        model.pendingRequests
+            |> Dict.map
+                (\_ { userMsg, audioUrl } ->
+                    { userMsg = Nonempty.map (Tuple.mapSecond map) userMsg
+                    , audioUrl = audioUrl
+                    }
+                )
+    , requestCount = model.requestCount
+    }
+        |> Model
+
+
+
+--{ userMsg : Nonempty ( Result LoadError Source, userMsg ), audioUrl : String }
 
 
 updateHelper :
