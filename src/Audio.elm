@@ -4,6 +4,7 @@ module Audio exposing
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
+    , sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
     )
 
 {-|
@@ -30,6 +31,11 @@ Define what audio should be playing.
 @docs Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
 
 
+# Generate audio
+
+@docs sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
+
+
 # Audio effects
 
 Effects you can apply to `Audio`.
@@ -48,7 +54,7 @@ WIP support for Lamdera. Ignore this for now.
 import Browser
 import Browser.Navigation exposing (Key)
 import Dict exposing (Dict)
-import Duration exposing (Duration)
+import Duration exposing (Duration, Seconds)
 import Html exposing (Html)
 import Json.Decode as JD
 import Json.Encode as JE
@@ -871,13 +877,24 @@ flattenAudio audio_ =
                         (\a -> { a | volumeTimelines = volumeAt :: a.volumeTimelines })
                         (flattenAudio effect.audio)
 
+        Oscillator oscillator ->
+            Debug.todo ""
+
 
 {-| Some kind of sound we want to play. To create `Audio` start with `audio`.
 -}
 type Audio
     = Group (List Audio)
     | BasicAudio { source : Source, startTime : Time.Posix, settings : PlayAudioConfig }
+    | Oscillator { oscillatorType : OscillatorType, startTime : Time.Posix }
     | Effect { effectType : EffectType, audio : Audio }
+
+
+type OscillatorType
+    = Sine Frequency
+    | Square Frequency
+    | Sawtooth Frequency
+    | Triangle Frequency
 
 
 {-| An effect we can apply to our sound such as changing the volume.
@@ -900,7 +917,7 @@ audioSourceBufferId (File audioSource) =
 {-| Extra settings when playing audio from a file.
 
     -- Here we play a song at half speed and it skips the first 15 seconds of the song.
-    audioWithConfig
+    Audio.audioWithConfig
         { loop = Nothing
         , playbackRate = 0.5
         , startAt = Duration.seconds 15
@@ -937,7 +954,7 @@ audioDefaultConfig =
         songLength =
             Duration.seconds 120
     in
-    audioWithConfig
+    Audio.audioWithConfig
         { default | loop = Just { loopStart = Duration.seconds 10, loopEnd = songLength } }
         coolBackgroundMusic
         startTime
@@ -957,6 +974,11 @@ audio source startTime =
     audioWithConfig audioDefaultConfig source startTime
 
 
+addMillis : Int -> Time.Posix -> Time.Posix
+addMillis milliseconds =
+    Time.posixToMillis >> (+) milliseconds >> Time.millisToPosix
+
+
 {-| Play audio from an audio source at a given time with config.
 
 Note that in some browsers audio will be muted until user interacts with the webpage.
@@ -965,6 +987,68 @@ Note that in some browsers audio will be muted until user interacts with the web
 audioWithConfig : PlayAudioConfig -> Source -> Time.Posix -> Audio
 audioWithConfig audioSettings source startTime =
     BasicAudio { source = source, startTime = startTime, settings = audioSettings }
+
+
+{-| Used with `ianmackenzie/elm-units` to represent a quantity of sound wave cycles.
+-}
+type Cycles
+    = Cycles Never
+
+
+{-| The number of cycles (aka vibrations) a sound wave makes per second.
+You can construct it with `cyclesPerSecond` make a custom function such as
+
+    import Duration
+    import Quantity
+
+    cyclesPerMillisecond cycles =
+        Quantity.Quantity cycles |> Quantity.per (Duration.milliseconds 1)
+
+-}
+type alias Frequency =
+    Quantity Float (Rate Cycles Seconds)
+
+
+{-| Create a frequency in terms of cycles per second.
+-}
+cyclesPerSecond : Float -> Frequency
+cyclesPerSecond cycles =
+    Quantity.Quantity cycles |> Quantity.per (Duration.seconds 1)
+
+
+{-| ∿∿∿ Generate a sine wave with a given frequency and starting point.
+-}
+sine : Frequency -> Time.Posix -> Audio
+sine frequency startTime =
+    Oscillator { oscillatorType = Sine frequency, startTime = startTime }
+
+
+{-| ⎍⎍⎍ Generate a square wave with a given frequency and starting point.
+-}
+square : Frequency -> Time.Posix -> Audio
+square frequency startTime =
+    Oscillator { oscillatorType = Square frequency, startTime = startTime }
+
+
+{-| ╱|╱|╱| Generate a sawtooth wave with a given frequency and starting point.
+-}
+sawtooth : Frequency -> Time.Posix -> Audio
+sawtooth frequency startTime =
+    Oscillator { oscillatorType = Sawtooth frequency, startTime = startTime }
+
+
+{-| ∧∧∧ Generate a triangle wave with a given frequency and starting point.
+-}
+triangle : Frequency -> Time.Posix -> Audio
+triangle frequency startTime =
+    Oscillator { oscillatorType = Triangle frequency, startTime = startTime }
+
+
+{-| Generate white noise with a given starting point.
+-}
+whiteNoise : Time.Posix -> Audio
+whiteNoise startTime =
+    Oscillator { oscillatorType = Sawtooth (Quantity.Quantity 453638765.7876906), startTime = startTime }
 
 
 {-| Scale how loud a given `Audio` is.
