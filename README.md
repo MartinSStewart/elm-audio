@@ -37,7 +37,26 @@ If you want to see a more interesting use case, I rewrote the audio system in [e
 
 ### JS Setup
 
-In order for this package to work correctly, you'll need to copy the following JS code into your program and then call `startAudio(myElmApp);`
+The following ports must be defined and passed into `Audio.Program`.
+
+```elm
+port audioPortToJS : Json.Encode.Value -> Cmd msg
+port audioPortFromJS : (Json.Decode.Value -> msg) -> Sub msg
+
+main : Audio.Program flags Model Msg
+main = 
+    Audio.elementWithAudio
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , audio = audio
+        , audioPort = { toJS = audioPortToJS, fromJS = audioPortFromJS }
+        }
+```
+
+Then you'll need to copy the following JS code into your program and then call `startAudio(myElmApp);` (look at the [example app](https://github.com/MartinSStewart/elm-audio/tree/master/example) if you're not sure about this).
+
 ```javascript
 function startAudio(app)
 {
