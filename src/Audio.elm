@@ -872,6 +872,16 @@ audioSourceBufferId (File audioSource) =
 
 
 {-| Extra settings when playing audio from a file.
+
+    -- Here we play a song at half speed and it skips the first 15 seconds of the song.
+    audioWithConfig
+        { loop = Nothing
+        , playbackRate = 0.5
+        , startAt = Duration.seconds 15
+        }
+        myCoolSong
+        songStartTime
+
 -}
 type alias PlayAudioConfig =
     { loop : Maybe LoopConfig
@@ -890,7 +900,7 @@ audioDefaultConfig =
     }
 
 
-{-| Control how audio loops. `loopEnd` defines where (relative to the start of the audio) the audio should loop and `loopStart` where it should loop to.
+{-| Control how audio loops. `loopEnd` defines where (relative to the start of the audio) the audio should loop and `loopStart` defines where it should loop to.
 
     -- Here we have a song that plays an intro once and then loops between the 10 second point and the end of the song.
     let
@@ -941,10 +951,10 @@ scaleVolume scaleBy audio_ =
 
     -- Here we define a function that fades in audio to full volume and then fades it out until it's muted.
     --
-    --  1                 ________
-    --                  /         \
-    --  0 ____________/            \_______
-    --     t ->   fade in        fade out
+    --  1                ________
+    --                 /         \
+    --  0 ____________/           \_______
+    --     t ->    fade in     fade out
     fadeInOut fadeInTime fadeOutTime audio =
         Audio.scaleVolumeAt
             (Nonempty
