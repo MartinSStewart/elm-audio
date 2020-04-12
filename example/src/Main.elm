@@ -2,7 +2,6 @@ port module Main exposing (..)
 
 import Audio exposing (Audio, AudioCmd)
 import Html exposing (Html)
-import Html.Attributes
 import Html.Events
 import Json.Decode
 import Json.Encode
