@@ -2,7 +2,7 @@ module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Program
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
-    , scaleVolume, scaleVolumeAt, VolumeTimeline
+    , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
     )
 
@@ -34,7 +34,7 @@ Define what audio should be playing.
 
 Effects you can apply to `Audio`.
 
-@docs scaleVolume, scaleVolumeAt, VolumeTimeline
+@docs scaleVolume, scaleVolumeAt
 
 
 # Lamdera stuff
@@ -308,10 +308,6 @@ mapUserMsg map (Model model) =
     , requestCount = model.requestCount
     }
         |> Model
-
-
-
---{ userMsg : Nonempty ( Result LoadError Source, userMsg ), audioUrl : String }
 
 
 updateHelper :
@@ -970,13 +966,15 @@ scaleVolume scaleBy audio_ =
         Time.posixToMillis >> ((+) s * 1000) >> Time.millisToPosix
 
 -}
-scaleVolumeAt : VolumeTimeline -> Audio -> Audio
+scaleVolumeAt : List ( Time.Posix, Float ) -> Audio -> Audio
 scaleVolumeAt volumeAt audio_ =
     Effect
         { effectType =
             ScaleVolumeAt
                 { volumeAt =
                     volumeAt
+                        |> Nonempty.fromList
+                        |> Maybe.withDefault (Nonempty.fromElement ( Time.millisToPosix 0, 1 ))
                         |> Nonempty.map (Tuple.mapSecond (max 0))
                         |> Nonempty.sortBy (Tuple.first >> Time.posixToMillis)
                 }
