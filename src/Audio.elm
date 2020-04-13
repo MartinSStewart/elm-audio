@@ -918,6 +918,9 @@ type alias LoopConfig =
 
 
 {-| Play audio from an audio source at a given time. This is the same as using `audioWithConfig audioDefaultConfig`.
+
+Note that in some browsers audio will be muted until user interacts with the webpage.
+
 -}
 audio : Source -> Time.Posix -> Audio
 audio source startTime =
@@ -925,6 +928,9 @@ audio source startTime =
 
 
 {-| Play audio from an audio source at a given time with config.
+
+Note that in some browsers audio will be muted until user interacts with the webpage.
+
 -}
 audioWithConfig : PlayAudioConfig -> Source -> Time.Posix -> Audio
 audioWithConfig audioSettings source startTime =
@@ -953,13 +959,11 @@ scaleVolume scaleBy audio_ =
     --     t ->    fade in     fade out
     fadeInOut fadeInTime fadeOutTime audio =
         Audio.scaleVolumeAt
-            (Nonempty
-                ( addSeconds -2 fadeInTime, 0 )
-                [ ( fadeInTime, 1 )
-                , ( fadeOutTime, 1 )
-                , ( addSeconds 2 fadeOutTime, 0 )
-                ]
-            )
+            [ ( addSeconds -2 fadeInTime, 0 )
+            , ( fadeInTime, 1 )
+            , ( fadeOutTime, 1 )
+            , ( addSeconds 2 fadeOutTime, 0 )
+            ]
             audio
 
     addSeconds s =
