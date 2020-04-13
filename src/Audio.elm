@@ -944,7 +944,9 @@ scaleVolume scaleBy audio_ =
     Effect { effectType = ScaleVolume { scaleBy = max 0 scaleBy }, audio = audio_ }
 
 
-{-| Scale how loud a given `Audio` is at given points in time. The volume will transition linearly between those points.
+{-| Scale how loud some `Audio` is at different points in time.
+The volume will transition linearly between those points.
+The points in time don't need to be sorted but they needs to be unique.
 
     import Audio
     import List.Nonempty exposing (Nonempty)
