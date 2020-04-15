@@ -30,7 +30,7 @@ Notice that we don't need to write code to explicitly start and stop our music. 
 
 ### Getting Started
 
-Here is a simple [example app](https://ellie-app.com/8zdD7wSbT6Da1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
+Here is a simple [example app](https://ellie-app.com/8BxVChb5fHLa1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
 
 If you want to see a more interesting use case, I rewrote the audio system in [elm-mogee](https://github.com/MartinSStewart/elm-mogee/tree/elm-audio) to use `elm-audio`.
 
