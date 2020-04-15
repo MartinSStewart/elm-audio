@@ -131,11 +131,7 @@ audio model =
 
                 FadingOut startTime stopTime ->
                     Audio.audio loadedModel.sound startTime
-                        |> Audio.scaleVolumeAt
-                            (Nonempty
-                                ( stopTime, 1 )
-                                [ ( addMillis 2000 stopTime, 0 ) ]
-                            )
+                        |> Audio.scaleVolumeAt [ (stopTime, 1 ), ( addMillis 2000 stopTime, 0 ) ]
 
         _ ->
             Audio.silence
@@ -152,7 +148,7 @@ port audioPortToJS : Json.Encode.Value -> Cmd msg
 port audioPortFromJS : (Json.Decode.Value -> msg) -> Sub msg
 
 
-main : Platform.Program () (Audio.Model Msg Model) (Audio.Model Msg)
+main : Platform.Program () (Audio.Model Msg Model) (Audio.Msg Msg)
 main =
     Audio.elementWithAudio
         { init = init
