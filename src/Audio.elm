@@ -2,9 +2,9 @@ module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+    , sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
-    , sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
     )
 
 {-|
@@ -673,13 +673,65 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                     )
 
 
+updateAudioOscillatorState :
+    ( NodeGroupId, FlattenedOscillator )
+    -> ( List FlattenedOscillator, Dict NodeGroupId FlattenedOscillator, List JE.Value )
+    -> ( List FlattenedOscillator, Dict NodeGroupId FlattenedOscillator, List JE.Value )
+updateAudioOscillatorState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json ) =
+    let
+        validAudio : List ( Int, FlattenedOscillator )
+        validAudio =
+            flattenedAudio
+                |> List.indexedMap Tuple.pair
+                |> List.filter
+                    (\( _, a ) -> a.startTime == audioGroup.startTime)
+    in
+    case find (\( _, a ) -> a == audioGroup) validAudio of
+        Just ( index, _ ) ->
+            -- We found a perfect match so nothing needs to change.
+            ( removeAt index flattenedAudio, audioState, json )
+
+        Nothing ->
+            case validAudio of
+                ( index, a ) :: _ ->
+                    let
+                        encodeValue getter encoder =
+                            if getter audioGroup == getter a then
+                                Nothing
+
+                            else
+                                encoder nodeGroupId (getter a) |> Just
+
+                        effects =
+                            [ encodeValue .volume encodeSetVolume
+                            , encodeValue .volumeTimelines encodeSetVolumeAt
+                            ]
+                                |> List.filterMap identity
+                    in
+                    -- We found audio that has the same bufferId and startTime but some other settings have changed.
+                    ( removeAt index flattenedAudio
+                    , Dict.insert nodeGroupId a audioState
+                    , effects ++ json
+                    )
+
+                [] ->
+                    -- We didn't find any audio with the same bufferId and startTime so we'll stop this sound.
+                    ( flattenedAudio
+                    , Dict.remove nodeGroupId audioState
+                    , encodeStopSound nodeGroupId :: json
+                    )
+
+
 diffAudioState : Int -> Dict NodeGroupId FlattenedAudio -> Audio -> ( Dict NodeGroupId FlattenedAudio, Int, List JE.Value )
 diffAudioState nodeGroupIdCounter audioState newAudio =
     let
+        ( flattenedAudio, flattenedOscillators ) =
+            flattenAudio newAudio
+
         ( newAudioLeft, newAudioState, json2 ) =
             Dict.toList audioState
                 |> List.foldl updateAudioState
-                    ( flattenAudio newAudio, audioState, [] )
+                    ( flattenedAudio, audioState, [] )
 
         ( newNodeGroupIdCounter, newAudioState2, json3 ) =
             newAudioLeft
@@ -848,37 +900,62 @@ type alias FlattenedAudio =
     }
 
 
-flattenAudio : Audio -> List FlattenedAudio
+type alias FlattenedOscillator =
+    { oscillatorType : OscillatorType
+    , startTime : Time.Posix
+    , volume : Float
+    , volumeTimelines : List (Nonempty ( Time.Posix, Float ))
+    }
+
+
+flattenAudio : Audio -> ( List FlattenedAudio, List FlattenedOscillator )
 flattenAudio audio_ =
     case audio_ of
         Group group_ ->
-            group_ |> List.map flattenAudio |> List.concat
+            group_
+                |> List.map flattenAudio
+                |> List.foldl (\( a, b ) ( listA, listB ) -> ( a ++ listA, b ++ listB )) ( [], [] )
 
         BasicAudio { source, startTime, settings } ->
-            [ { source = source
-              , startTime = startTime
-              , startAt = settings.startAt
-              , volume = 1
-              , volumeTimelines = []
-              , loop = settings.loop
-              , playbackRate = settings.playbackRate
-              }
-            ]
+            ( [ { source = source
+                , startTime = startTime
+                , startAt = settings.startAt
+                , volume = 1
+                , volumeTimelines = []
+                , loop = settings.loop
+                , playbackRate = settings.playbackRate
+                }
+              ]
+            , []
+            )
 
         Effect effect ->
             case effect.effectType of
                 ScaleVolume scaleVolume_ ->
-                    List.map
-                        (\a -> { a | volume = scaleVolume_.scaleBy * a.volume })
-                        (flattenAudio effect.audio)
+                    let
+                        mapFunc =
+                            List.map
+                                (\a -> { a | volume = scaleVolume_.scaleBy * a.volume })
+                    in
+                    Tuple.mapBoth mapFunc mapFunc (flattenAudio effect.audio)
 
                 ScaleVolumeAt { volumeAt } ->
-                    List.map
-                        (\a -> { a | volumeTimelines = volumeAt :: a.volumeTimelines })
-                        (flattenAudio effect.audio)
+                    let
+                        mapFunc =
+                            List.map
+                                (\a -> { a | volumeTimelines = volumeAt :: a.volumeTimelines })
+                    in
+                    Tuple.mapBoth mapFunc mapFunc (flattenAudio effect.audio)
 
-        Oscillator oscillator ->
-            Debug.todo ""
+        Oscillator { oscillatorType, startTime } ->
+            ( []
+            , [ { oscillatorType = oscillatorType
+                , startTime = startTime
+                , volume = 1
+                , volumeTimelines = []
+                }
+              ]
+            )
 
 
 {-| Some kind of sound we want to play. To create `Audio` start with `audio`.
@@ -895,6 +972,7 @@ type OscillatorType
     | Square Frequency
     | Sawtooth Frequency
     | Triangle Frequency
+    | WhiteNoise
 
 
 {-| An effect we can apply to our sound such as changing the volume.
@@ -996,7 +1074,7 @@ type Cycles
 
 
 {-| The number of cycles (aka vibrations) a sound wave makes per second.
-You can construct it with `cyclesPerSecond` make a custom function such as
+You can construct it with `cyclesPerSecond` or make a custom function such as
 
     import Duration
     import Quantity
@@ -1016,39 +1094,39 @@ cyclesPerSecond cycles =
     Quantity.Quantity cycles |> Quantity.per (Duration.seconds 1)
 
 
-{-| ∿∿∿ Generate a sine wave with a given frequency and starting point.
+{-| ∿∿∿ Generate a sine wave with a given frequency and starting point.
 -}
 sine : Frequency -> Time.Posix -> Audio
 sine frequency startTime =
     Oscillator { oscillatorType = Sine frequency, startTime = startTime }
 
 
-{-| ⎍⎍⎍ Generate a square wave with a given frequency and starting point.
+{-| ⎍⎍⎍ Generate a square wave with a given frequency and starting point.
 -}
 square : Frequency -> Time.Posix -> Audio
 square frequency startTime =
     Oscillator { oscillatorType = Square frequency, startTime = startTime }
 
 
-{-| ╱|╱|╱| Generate a sawtooth wave with a given frequency and starting point.
+{-| ⩘⩘⩘ Generate a sawtooth wave with a given frequency and starting point.
 -}
 sawtooth : Frequency -> Time.Posix -> Audio
 sawtooth frequency startTime =
     Oscillator { oscillatorType = Sawtooth frequency, startTime = startTime }
 
 
-{-| ∧∧∧ Generate a triangle wave with a given frequency and starting point.
+{-| ⋀⋀⋀ Generate a triangle wave with a given frequency and starting point.
 -}
 triangle : Frequency -> Time.Posix -> Audio
 triangle frequency startTime =
     Oscillator { oscillatorType = Triangle frequency, startTime = startTime }
 
 
-{-| Generate white noise with a given starting point.
+{-| ▒▒▒ Generate white noise with a given starting point.
 -}
 whiteNoise : Time.Posix -> Audio
 whiteNoise startTime =
-    Oscillator { oscillatorType = Sawtooth (Quantity.Quantity 453638765.7876906), startTime = startTime }
+    Oscillator { oscillatorType = WhiteNoise, startTime = startTime }
 
 
 {-| Scale how loud a given `Audio` is.
