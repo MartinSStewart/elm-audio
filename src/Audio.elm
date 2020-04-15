@@ -1,9 +1,9 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio, Program
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
-    , lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
+    , lamderaFrontendWithAudio, migrateModel, migrateMsg
     )
 
 {-|
@@ -13,7 +13,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio, Program
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
 
 
 # Load audio
@@ -41,7 +41,7 @@ Effects you can apply to `Audio`.
 
 WIP support for Lamdera. Ignore this for now.
 
-@docs lamderaFrontendWithAudio, userModel, withUserModel, mapUserMsg
+@docs lamderaFrontendWithAudio, migrateModel, migrateMsg
 
 -}
 
@@ -58,12 +58,7 @@ import Time
 import Url exposing (Url)
 
 
-{-| Alias for Platform.Program
--}
-type alias Program flags userModel userMsg =
-    Platform.Program flags (Model userMsg userModel) (Msg userMsg)
-
-
+{-| -}
 type Model userMsg userModel
     = Model (Model_ userMsg userModel)
 
@@ -82,6 +77,7 @@ type alias Model_ userMsg userModel =
     }
 
 
+{-| -}
 type Msg userMsg
     = FromJSMsg FromJSMsg
     | UserMsg userMsg
@@ -125,13 +121,18 @@ cmdMap : (a -> b) -> AudioCmd a -> AudioCmd b
 cmdMap map cmd =
     case cmd of
         AudioLoadRequest audioLoadRequest_ ->
-            { userMsg = Nonempty.map (Tuple.mapSecond map) audioLoadRequest_.userMsg
-            , audioUrl = audioLoadRequest_.audioUrl
-            }
+            mapAudioLoadRequest map audioLoadRequest_
                 |> AudioLoadRequest
 
         AudioCmdGroup audioCmds ->
             audioCmds |> List.map (cmdMap map) |> AudioCmdGroup
+
+
+mapAudioLoadRequest : (a -> b) -> AudioLoadRequest_ a -> AudioLoadRequest_ b
+mapAudioLoadRequest mapFunc audioLoadRequest =
+    { userMsg = Nonempty.map (Tuple.mapSecond mapFunc) audioLoadRequest.userMsg
+    , audioUrl = audioLoadRequest.audioUrl
+    }
 
 
 {-| Ports that allows this package to communicate with the JS portion of the package.
@@ -155,7 +156,7 @@ elementWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags model msg
+    -> Platform.Program flags (Model msg model) (Msg msg)
 elementWithAudio app =
     { init = app.init >> initHelper app.audioPort.toJS app.audio
     , view = getUserModel >> app.view >> Html.map UserMsg
@@ -175,7 +176,7 @@ documentWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags model msg
+    -> Platform.Program flags (Model msg model) (Msg msg)
 documentWithAudio app =
     { init = app.init >> initHelper app.audioPort.toJS app.audio
     , view =
@@ -205,7 +206,7 @@ applicationWithAudio :
     , audio : model -> Audio
     , audioPort : Ports msg
     }
-    -> Program flags model msg
+    -> Platform.Program flags (Model msg model) (Msg msg)
 applicationWithAudio app =
     { init = \flags url key -> app.init flags url key |> initHelper app.audioPort.toJS app.audio
     , view =
@@ -268,11 +269,40 @@ lamderaFrontendWithAudio app =
     }
 
 
-{-| Get the user state stored in `Model`.
+{-| Use this function when migrating your model in Lamdera.
 -}
-userModel : Model userMsg userModel -> userModel
-userModel (Model model) =
-    model.userModel
+migrateModel :
+    (msgOld -> msgNew)
+    -> (modelOld -> ( modelNew, Cmd msgNew ))
+    -> Model msgOld modelOld
+    -> ( Model msgNew modelNew, Cmd msgNew )
+migrateModel msgMigrate modelMigrate (Model model) =
+    let
+        ( newModel, cmd ) =
+            modelMigrate model.userModel
+    in
+    ( Model
+        { userModel = newModel
+        , nodeGroupIdCounter = model.nodeGroupIdCounter
+        , samplesPerSecond = model.samplesPerSecond
+        , audioState = model.audioState
+        , pendingRequests = Dict.map (\_ value -> mapAudioLoadRequest msgMigrate value) model.pendingRequests
+        , requestCount = model.requestCount
+        }
+    , cmd
+    )
+
+
+{-| Use this function when migrating messages in Lamdera.
+-}
+migrateMsg : (msgOld -> ( msgNew, Cmd msgNew )) -> Msg msgOld -> ( Msg msgNew, Cmd msgNew )
+migrateMsg msgMigrate msg =
+    case msg of
+        FromJSMsg fromJSMsg ->
+            ( FromJSMsg fromJSMsg, Cmd.none )
+
+        UserMsg userMsg ->
+            msgMigrate userMsg |> Tuple.mapFirst UserMsg
 
 
 {-| Set the user state stored in `Model`. Useful for dealing with migrations in Lamdera.
@@ -937,7 +967,9 @@ audioWithConfig audioSettings source startTime =
     BasicAudio { source = source, startTime = startTime, settings = audioSettings }
 
 
-{-| Scale how loud a given `Audio` is. If the the volume is less than 0, 0 will be used instead.
+{-| Scale how loud a given `Audio` is.
+1 preserves the current volume, 0.5 halves it, and 0 mutes it.
+If the the volume is less than 0, 0 will be used instead.
 -}
 scaleVolume : Float -> Audio -> Audio
 scaleVolume scaleBy audio_ =
@@ -949,7 +981,6 @@ The volume will transition linearly between those points.
 The points in time don't need to be sorted but they need to be unique.
 
     import Audio
-    import List.Nonempty exposing (Nonempty)
     import Time
 
 

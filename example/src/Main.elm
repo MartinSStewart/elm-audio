@@ -152,7 +152,7 @@ port audioPortToJS : Json.Encode.Value -> Cmd msg
 port audioPortFromJS : (Json.Decode.Value -> msg) -> Sub msg
 
 
-main : Audio.Program () Model Msg
+main : Platform.Program () (Audio.Model Msg Model) (Audio.Model Msg)
 main =
     Audio.elementWithAudio
         { init = init
