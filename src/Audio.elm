@@ -985,7 +985,7 @@ The points in time don't need to be sorted but they need to be unique.
     import Time
 
 
-    -- Here we define a function that fades in audio to full volume and then fades it out until it's muted.
+    -- Here we define an audio function that fades in to full volume and then fades out until it's muted again.
     --
     --  1                ________
     --                 /         \
