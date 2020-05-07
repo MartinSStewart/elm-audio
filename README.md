@@ -13,7 +13,6 @@ audio model =
     else
         Audio.silence
 
-main : Audio.Program flags Model Msg
 main = 
     Audio.elementWithAudio
         { init = init
@@ -30,21 +29,21 @@ Notice that we don't need to write code to explicitly start and stop our music. 
 
 ### Getting Started
 
-Here is a simple [example app](https://ellie-app.com/8BxVChb5fHLa1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
+Make sure you install `ianmackenzie/elm-units` and `elm/time` as this package uses [`Duration`](https://package.elm-lang.org/packages/ianmackenzie/elm-units/latest/Duration#Duration) and [`Posix`](https://package.elm-lang.org/packages/elm/time/latest/Time#Posix) throughout the API.
+
+Here is a simple [example app](https://ellie-app.com/8Nh85ghZWQ5a1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
 
 If you want to see a more interesting use case, I rewrote the audio system in [elm-mogee](https://github.com/MartinSStewart/elm-mogee/tree/elm-audio) to use `elm-audio`.
 
-
 ### JS Setup
 
-The following ports must be defined and passed into `Audio.Program`.
+The following ports must be defined.
 
 ```elm
 -- The ports must have these specifc names.
 port audioPortToJS : Json.Encode.Value -> Cmd msg
 port audioPortFromJS : (Json.Decode.Value -> msg) -> Sub msg
 
-main : Audio.Program flags Model Msg
 main = 
     Audio.elementWithAudio
         { init = init

@@ -1,6 +1,7 @@
 port module Main exposing (..)
 
 import Audio exposing (Audio, AudioCmd)
+import Duration
 import Html exposing (Html)
 import Html.Events
 import Json.Decode
@@ -131,15 +132,10 @@ audio model =
 
                 FadingOut startTime stopTime ->
                     Audio.audio loadedModel.sound startTime
-                        |> Audio.scaleVolumeAt [ (stopTime, 1 ), ( addMillis 2000 stopTime, 0 ) ]
+                        |> Audio.scaleVolumeAt [ (stopTime, 1 ), ( Duration.addTo stopTime (Duration.seconds 2), 0 ) ]
 
         _ ->
             Audio.silence
-
-
-addMillis : Int -> Time.Posix -> Time.Posix
-addMillis millis =
-    Time.posixToMillis >> (+) millis >> Time.millisToPosix
 
 
 port audioPortToJS : Json.Encode.Value -> Cmd msg

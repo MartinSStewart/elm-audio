@@ -981,6 +981,7 @@ The volume will transition linearly between those points.
 The points in time don't need to be sorted but they need to be unique.
 
     import Audio
+    import Duration
     import Time
 
 
@@ -992,15 +993,12 @@ The points in time don't need to be sorted but they need to be unique.
     --     t ->    fade in     fade out
     fadeInOut fadeInTime fadeOutTime audio =
         Audio.scaleVolumeAt
-            [ ( addSeconds -2 fadeInTime, 0 )
+            [ ( Duration.subtractFrom fadeInTime Duration.second, 0 )
             , ( fadeInTime, 1 )
             , ( fadeOutTime, 1 )
-            , ( addSeconds 2 fadeOutTime, 0 )
+            , ( Duration.addTo fadeOutTime Duration.second, 0 )
             ]
             audio
-
-    addSeconds s =
-        Time.posixToMillis >> ((+) s * 1000) >> Time.millisToPosix
 
 -}
 scaleVolumeAt : List ( Time.Posix, Float ) -> Audio -> Audio
