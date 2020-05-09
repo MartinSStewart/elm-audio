@@ -1,3 +1,11 @@
+<html>
+<head>
+  <meta charset="UTF-8">
+</head>
+<body>
+<main></main>
+<script src="elm.js"></script>
+<script>
 function startAudio(app)
 {
     window.AudioContext = window.AudioContext || window.webkitAudioContext || false;
@@ -12,15 +20,13 @@ function startAudio(app)
          */
         let mp3MarginInSamples = 528;
 
-        // Generate white noise buffer. Original code found here https://noisehack.com/generate-noise-web-audio-api/
+
         let bufferSize = 2 * context.sampleRate;
         let noiseBuffer = context.createBuffer(1, bufferSize, context.sampleRate);
         let output = noiseBuffer.getChannelData(0);
         for (let i = 0; i < bufferSize; i++) {
             output[i] = Math.random() * 2 - 1;
         }
-
-        // Generate pink noise buffer. Original code found here https://noisehack.com/generate-noise-web-audio-api/
 
         app.ports.audioPortFromJS.send({ type: 2, samplesPerSecond: context.sampleRate });
 
@@ -255,3 +261,9 @@ function startAudio(app)
         console.log("Web audio is not supported in your browser.");
     }
 }
+    var app = Elm.Main.init({ node: document.querySelector('main') });
+
+    startAudio(app);
+  </script>
+</body>
+</html>

@@ -6,7 +6,6 @@ import Html exposing (Html)
 import Html.Events
 import Json.Decode
 import Json.Encode
-import List.Nonempty exposing (Nonempty(..))
 import Task
 import Time
 
@@ -132,7 +131,7 @@ audio model =
 
                 FadingOut startTime stopTime ->
                     Audio.audio loadedModel.sound startTime
-                        |> Audio.scaleVolumeAt [ (stopTime, 1 ), ( Duration.addTo stopTime (Duration.seconds 2), 0 ) ]
+                        |> Audio.scaleVolumeAt [ ( stopTime, 1 ), ( Duration.addTo stopTime (Duration.seconds 2), 0 ) ]
 
         _ ->
             Audio.silence

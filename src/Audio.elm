@@ -75,6 +75,7 @@ type alias NodeGroupId =
 
 type alias Model_ userMsg userModel =
     { audioState : Dict NodeGroupId FlattenedAudio
+    , oscillatorState : Dict NodeGroupId FlattenedOscillator
     , nodeGroupIdCounter : Int
     , userModel : userModel
     , requestCount : Int
@@ -292,6 +293,7 @@ migrateModel msgMigrate modelMigrate (Model model) =
         , nodeGroupIdCounter = model.nodeGroupIdCounter
         , samplesPerSecond = model.samplesPerSecond
         , audioState = model.audioState
+        , oscillatorState = model.oscillatorState
         , pendingRequests = Dict.map (\_ value -> mapAudioLoadRequest msgMigrate value) model.pendingRequests
         , requestCount = model.requestCount
         }
@@ -319,6 +321,7 @@ withUserModel userModel_ (Model model) =
     , nodeGroupIdCounter = model.nodeGroupIdCounter
     , samplesPerSecond = model.samplesPerSecond
     , audioState = model.audioState
+    , oscillatorState = model.oscillatorState
     , pendingRequests = model.pendingRequests
     , requestCount = model.requestCount
     }
@@ -333,6 +336,7 @@ mapUserMsg map (Model model) =
     , nodeGroupIdCounter = model.nodeGroupIdCounter
     , samplesPerSecond = model.samplesPerSecond
     , audioState = model.audioState
+    , oscillatorState = model.oscillatorState
     , pendingRequests =
         model.pendingRequests
             |> Dict.map
@@ -357,15 +361,20 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
         ( newUserModel, userCmd, audioCmds ) =
             userUpdate model.userModel
 
-        ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState model.nodeGroupIdCounter model.audioState (audioFunc newUserModel)
+        { audioState, oscillatorState, nodeGroupIdCounter, json } =
+            diffAudioState
+                model.nodeGroupIdCounter
+                model.audioState
+                model.oscillatorState
+                (audioFunc newUserModel)
 
         newModel : Model userMsg userModel
         newModel =
             Model
                 { model
                     | audioState = audioState
-                    , nodeGroupIdCounter = newNodeGroupIdCounter
+                    , oscillatorState = oscillatorState
+                    , nodeGroupIdCounter = nodeGroupIdCounter
                     , userModel = newUserModel
                 }
 
@@ -390,13 +399,14 @@ initHelper :
     -> ( Model userMsg model, Cmd (Msg userMsg) )
 initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     let
-        ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState 0 Dict.empty (audioFunc model)
+        { audioState, oscillatorState, nodeGroupIdCounter, json } =
+            diffAudioState 0 Dict.empty Dict.empty (audioFunc model)
 
         initialModel =
             Model
                 { audioState = audioState
-                , nodeGroupIdCounter = newNodeGroupIdCounter
+                , oscillatorState = oscillatorState
+                , nodeGroupIdCounter = nodeGroupIdCounter
                 , userModel = model
                 , requestCount = 0
                 , pendingRequests = Dict.empty
@@ -564,6 +574,7 @@ decodeLoadError =
             )
 
 
+decodeFromJSMsg : JD.Decoder FromJSMsg
 decodeFromJSMsg =
     JD.field "type" JD.int
         |> JD.andThen
@@ -610,23 +621,25 @@ type BufferId
     = BufferId Int
 
 
+encodeBufferId : BufferId -> JE.Value
 encodeBufferId (BufferId bufferId) =
     JE.int bufferId
 
 
+decodeBufferId : JD.Decoder BufferId
 decodeBufferId =
     JD.int |> JD.map BufferId
 
 
 updateAudioState :
     ( NodeGroupId, FlattenedAudio )
-    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
-    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
-updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json ) =
+    -> { audioLeft : List FlattenedAudio, audioState : Dict NodeGroupId FlattenedAudio, json : List JE.Value }
+    -> { audioLeft : List FlattenedAudio, audioState : Dict NodeGroupId FlattenedAudio, json : List JE.Value }
+updateAudioState ( nodeGroupId, audioGroup ) { audioLeft, audioState, json } =
     let
         validAudio : List ( Int, FlattenedAudio )
         validAudio =
-            flattenedAudio
+            audioLeft
                 |> List.indexedMap Tuple.pair
                 |> List.filter
                     (\( _, a ) ->
@@ -638,7 +651,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
     case find (\( _, a ) -> a == audioGroup) validAudio of
         Just ( index, _ ) ->
             -- We found a perfect match so nothing needs to change.
-            ( removeAt index flattenedAudio, audioState, json )
+            { audioLeft = removeAt index audioLeft, audioState = audioState, json = json }
 
         Nothing ->
             case validAudio of
@@ -660,28 +673,28 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                                 |> List.filterMap identity
                     in
                     -- We found audio that has the same bufferId and startTime but some other settings have changed.
-                    ( removeAt index flattenedAudio
-                    , Dict.insert nodeGroupId a audioState
-                    , effects ++ json
-                    )
+                    { audioLeft = removeAt index audioLeft
+                    , audioState = Dict.insert nodeGroupId a audioState
+                    , json = effects ++ json
+                    }
 
                 [] ->
                     -- We didn't find any audio with the same bufferId and startTime so we'll stop this sound.
-                    ( flattenedAudio
-                    , Dict.remove nodeGroupId audioState
-                    , encodeStopSound nodeGroupId :: json
-                    )
+                    { audioLeft = audioLeft
+                    , audioState = Dict.remove nodeGroupId audioState
+                    , json = encodeStopSound nodeGroupId :: json
+                    }
 
 
 updateAudioOscillatorState :
     ( NodeGroupId, FlattenedOscillator )
-    -> ( List FlattenedOscillator, Dict NodeGroupId FlattenedOscillator, List JE.Value )
-    -> ( List FlattenedOscillator, Dict NodeGroupId FlattenedOscillator, List JE.Value )
-updateAudioOscillatorState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json ) =
+    -> { oscillatorsLeft : List FlattenedOscillator, oscillatorState : Dict NodeGroupId FlattenedOscillator, json : List JE.Value }
+    -> { oscillatorsLeft : List FlattenedOscillator, oscillatorState : Dict NodeGroupId FlattenedOscillator, json : List JE.Value }
+updateAudioOscillatorState ( nodeGroupId, audioGroup ) { oscillatorsLeft, oscillatorState, json } =
     let
         validAudio : List ( Int, FlattenedOscillator )
         validAudio =
-            flattenedAudio
+            oscillatorsLeft
                 |> List.indexedMap Tuple.pair
                 |> List.filter
                     (\( _, a ) -> a.startTime == audioGroup.startTime)
@@ -689,7 +702,7 @@ updateAudioOscillatorState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioSt
     case find (\( _, a ) -> a == audioGroup) validAudio of
         Just ( index, _ ) ->
             -- We found a perfect match so nothing needs to change.
-            ( removeAt index flattenedAudio, audioState, json )
+            { oscillatorsLeft = removeAt index oscillatorsLeft, oscillatorState = oscillatorState, json = json }
 
         Nothing ->
             case validAudio of
@@ -709,32 +722,42 @@ updateAudioOscillatorState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioSt
                                 |> List.filterMap identity
                     in
                     -- We found audio that has the same bufferId and startTime but some other settings have changed.
-                    ( removeAt index flattenedAudio
-                    , Dict.insert nodeGroupId a audioState
-                    , effects ++ json
-                    )
+                    { oscillatorsLeft = removeAt index oscillatorsLeft
+                    , oscillatorState = Dict.insert nodeGroupId a oscillatorState
+                    , json = effects ++ json
+                    }
 
                 [] ->
                     -- We didn't find any audio with the same bufferId and startTime so we'll stop this sound.
-                    ( flattenedAudio
-                    , Dict.remove nodeGroupId audioState
-                    , encodeStopSound nodeGroupId :: json
-                    )
+                    { oscillatorsLeft = oscillatorsLeft
+                    , oscillatorState = Dict.remove nodeGroupId oscillatorState
+                    , json = encodeStopSound nodeGroupId :: json
+                    }
 
 
-diffAudioState : Int -> Dict NodeGroupId FlattenedAudio -> Audio -> ( Dict NodeGroupId FlattenedAudio, Int, List JE.Value )
-diffAudioState nodeGroupIdCounter audioState newAudio =
+diffAudioState :
+    Int
+    -> Dict NodeGroupId FlattenedAudio
+    -> Dict NodeGroupId FlattenedOscillator
+    -> Audio
+    ->
+        { audioState : Dict NodeGroupId FlattenedAudio
+        , oscillatorState : Dict NodeGroupId FlattenedOscillator
+        , nodeGroupIdCounter : Int
+        , json : List JE.Value
+        }
+diffAudioState nodeGroupIdCounter audioState oscillatorState newAudio =
     let
         ( flattenedAudio, flattenedOscillators ) =
             flattenAudio newAudio
 
-        ( newAudioLeft, newAudioState, json2 ) =
+        audioResult =
             Dict.toList audioState
                 |> List.foldl updateAudioState
-                    ( flattenedAudio, audioState, [] )
+                    { audioLeft = flattenedAudio, audioState = audioState, json = [] }
 
-        ( newNodeGroupIdCounter, newAudioState2, json3 ) =
-            newAudioLeft
+        ( newNodeGroupIdCounter, newAudioState2, audioJson2 ) =
+            audioResult.audioLeft
                 |> List.foldl
                     (\audioLeft ( counter, audioState_, json_ ) ->
                         ( counter + 1
@@ -742,9 +765,29 @@ diffAudioState nodeGroupIdCounter audioState newAudio =
                         , encodeStartSound counter audioLeft :: json_
                         )
                     )
-                    ( nodeGroupIdCounter, newAudioState, json2 )
+                    ( nodeGroupIdCounter, audioResult.audioState, audioResult.json )
+
+        oscillatorResult =
+            Dict.toList oscillatorState
+                |> List.foldl updateAudioOscillatorState
+                    { oscillatorsLeft = flattenedOscillators, oscillatorState = oscillatorState, json = [] }
+
+        ( newNodeGroupIdCounter2, newOscillatorState2, oscillatorJson2 ) =
+            oscillatorResult.oscillatorsLeft
+                |> List.foldl
+                    (\oscillatorsLeft ( counter, oscillatorState_, json_ ) ->
+                        ( counter + 1
+                        , Dict.insert counter oscillatorsLeft oscillatorState_
+                        , encodeStartOscillator counter oscillatorsLeft :: json_
+                        )
+                    )
+                    ( newNodeGroupIdCounter, oscillatorResult.oscillatorState, oscillatorResult.json )
     in
-    ( newAudioState2, newNodeGroupIdCounter, json3 )
+    { audioState = newAudioState2
+    , oscillatorState = newOscillatorState2
+    , nodeGroupIdCounter = newNodeGroupIdCounter2
+    , json = oscillatorJson2 ++ audioJson2
+    }
 
 
 encodeStartSound : NodeGroupId -> FlattenedAudio -> JE.Value
@@ -760,6 +803,42 @@ encodeStartSound nodeGroupId audio_ =
         , ( "loop", encodeLoopConfig audio_.loop )
         , ( "playbackRate", JE.float audio_.playbackRate )
         ]
+
+
+encodeStartOscillator : NodeGroupId -> FlattenedOscillator -> JE.Value
+encodeStartOscillator nodeGroupId audio_ =
+    let
+        ( oscillatorType, frequency_ ) =
+            case audio_.oscillatorType of
+                WhiteNoise ->
+                    ( "whiteNoise", Quantity.zero )
+
+                Sine frequency ->
+                    ( "sine", frequency )
+
+                Square frequency ->
+                    ( "square", frequency )
+
+                Sawtooth frequency ->
+                    ( "sawtooth", frequency )
+
+                Triangle frequency ->
+                    ( "triangle", frequency )
+    in
+    JE.object
+        [ ( "action", JE.string "startOscillator" )
+        , ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "oscillatorType", JE.string oscillatorType )
+        , ( "startTime", audio_.startTime |> encodeTime )
+        , ( "volume", JE.float audio_.volume )
+        , ( "volumeTimelines", JE.list encodeVolumeTimeline audio_.volumeTimelines )
+        , ( "frequency", encodeFrequency frequency_ )
+        ]
+
+
+encodeFrequency : Quantity Float (Rate Cycles Seconds) -> JE.Value
+encodeFrequency (Quantity.Quantity frequency) =
+    JE.float frequency
 
 
 encodeTime : Time.Posix -> JE.Value
@@ -1074,7 +1153,7 @@ type Cycles
 
 
 {-| The number of cycles (aka vibrations) a sound wave makes per second.
-You can construct it with `cyclesPerSecond` or make a custom function such as
+You can construct it with [`cyclesPerSecond`](#cyclesPerSecond) or make a custom function such as
 
     import Duration
     import Quantity
