@@ -2,7 +2,7 @@ module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
-    , sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
+    , sine, square, sawtooth, triangle, whiteNoise, pinkNoise, brownNoise, cyclesPerSecond, Cycles, Frequency
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
     )
@@ -33,7 +33,7 @@ Define what audio should be playing.
 
 # Generate audio
 
-@docs sine, square, sawtooth, triangle, whiteNoise, cyclesPerSecond, Cycles, Frequency
+@docs sine, square, sawtooth, triangle, whiteNoise, pinkNoise, brownNoise, cyclesPerSecond, Cycles, Frequency
 
 
 # Audio effects
@@ -813,6 +813,12 @@ encodeStartOscillator nodeGroupId audio_ =
                 WhiteNoise ->
                     ( "whiteNoise", Quantity.zero )
 
+                PinkNoise ->
+                    ( "pinkNoise", Quantity.zero )
+
+                BrownNoise ->
+                    ( "brownNoise", Quantity.zero )
+
                 Sine frequency ->
                     ( "sine", frequency )
 
@@ -1052,6 +1058,8 @@ type OscillatorType
     | Sawtooth Frequency
     | Triangle Frequency
     | WhiteNoise
+    | PinkNoise
+    | BrownNoise
 
 
 {-| An effect we can apply to our sound such as changing the volume.
@@ -1201,11 +1209,27 @@ triangle frequency startTime =
     Oscillator { oscillatorType = Triangle frequency, startTime = startTime }
 
 
-{-| ▒▒▒ Generate white noise with a given starting point.
+{-| ▓▓▓ Generate white noise with a given starting point.
 -}
 whiteNoise : Time.Posix -> Audio
 whiteNoise startTime =
     Oscillator { oscillatorType = WhiteNoise, startTime = startTime }
+
+
+{-| ▒▒▒ Generate pink noise with a given starting point.
+This is similar to [white noise](#whiteNoise) but higher frequencies are attenuated so the noise feels less intense. It kind of sounds like a waterfall.
+-}
+pinkNoise : Time.Posix -> Audio
+pinkNoise startTime =
+    Oscillator { oscillatorType = PinkNoise, startTime = startTime }
+
+
+{-| ░░░ Generate brown noise (aka brownian noise) with a given starting point.
+This is similar to [pink noise](#pinkNoise) but higher frequencies are attenuated even more. It kind of sounds like the background noise in an airliner.
+-}
+brownNoise : Time.Posix -> Audio
+brownNoise startTime =
+    Oscillator { oscillatorType = BrownNoise, startTime = startTime }
 
 
 {-| Scale how loud a given `Audio` is.

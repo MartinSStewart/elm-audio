@@ -2,7 +2,7 @@ port module Main exposing (..)
 
 import Audio exposing (Audio, AudioCmd)
 import Browser.Events
-import Duration
+import Duration exposing (Duration)
 import Html exposing (Html)
 import Html.Events
 import Json.Decode
@@ -108,30 +108,41 @@ note musicStart noteOffset timeOffset =
             Duration.milliseconds 150
 
         startTime =
-            Duration.addTo musicStart (Quantity.multiplyBy timeOffset noteLength)
+            Duration.addTo musicStart (Quantity.multiplyBy timeOffset beatLength)
     in
-    Audio.triangle (frequency noteOffset) startTime
+    Audio.square (frequency noteOffset) startTime
         |> Audio.scaleVolumeAt
             [ ( startTime, 0.5 )
-            , ( Duration.addTo startTime (noteLength |> Quantity.minus Duration.millisecond), 0.5 )
+            , ( Duration.addTo startTime (Quantity.multiplyBy 0.95 noteLength), 0.3 )
             , ( Duration.addTo startTime noteLength, 0 )
             ]
 
 
-percussion : Time.Posix -> Float -> Audio
-percussion musicStart timeOffset =
-    let
-        noteLength =
-            Duration.milliseconds 150
+beatLength : Duration
+beatLength =
+    Duration.milliseconds 150
 
+
+percussion : Time.Posix -> Float -> Audio
+percussion =
+    percussionHelper (Duration.milliseconds 150)
+
+
+percussionShort : Time.Posix -> Float -> Audio
+percussionShort =
+    percussionHelper (Duration.milliseconds 75)
+
+
+percussionHelper : Duration -> Time.Posix -> Float -> Audio
+percussionHelper duration musicStart timeOffset =
+    let
         startTime =
-            Duration.addTo musicStart (Quantity.multiplyBy timeOffset noteLength)
+            Duration.addTo musicStart (Quantity.multiplyBy timeOffset beatLength)
     in
     Audio.whiteNoise startTime
         |> Audio.scaleVolumeAt
-            [ ( startTime, 0.2 )
-            , ( Duration.addTo startTime (noteLength |> Quantity.minus Duration.millisecond), 0.2 )
-            , ( Duration.addTo startTime noteLength, 0 )
+            [ ( startTime, 0.5 )
+            , ( Duration.addTo startTime duration, 0 )
             ]
 
 
@@ -153,22 +164,24 @@ audio model =
                 , percussion startTime 0
                 , note startTime 7 1
                 , note startTime -3 1
-                , percussion startTime 1
+                , percussionShort startTime 1
                 , note startTime 7 3
                 , note startTime -3 3
                 , percussion startTime 3
                 , note startTime 3 5
                 , note startTime -3 5
-                , percussion startTime 5
+                , percussionShort startTime 5
                 , note startTime 7 6
                 , note startTime -3 6
                 , percussion startTime 6
                 , note startTime 10 8
                 , note startTime 2 8
                 , note startTime -2 8
-                , percussion startTime 8
+                , percussionShort startTime 8
                 , note startTime -2 12
-                , percussion startTime 12
+                , percussionShort startTime 12
+                , percussionShort startTime 13
+                , percussionShort startTime 14
                 ]
 
         Paused { startTime, pauseTime } ->
