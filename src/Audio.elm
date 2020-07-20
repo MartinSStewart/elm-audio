@@ -810,7 +810,7 @@ encodeAudioCmd (Model model) audioCmd =
 
         newPendingRequests : List ( Int, AudioLoadRequest_ userMsg )
         newPendingRequests =
-            flattenedAudioCmd |> List.indexedMap Tuple.pair
+            flattenedAudioCmd |> List.indexedMap (\index request -> ( model.requestCount + index, request ))
     in
     ( { model
         | requestCount = model.requestCount + List.length flattenedAudioCmd
@@ -818,7 +818,7 @@ encodeAudioCmd (Model model) audioCmd =
       }
         |> Model
     , newPendingRequests
-        |> List.map (\( index, value ) -> encodeAudioLoadRequest (model.requestCount + index) value)
+        |> List.map (\( index, value ) -> encodeAudioLoadRequest index value)
         |> JE.list identity
     )
 
