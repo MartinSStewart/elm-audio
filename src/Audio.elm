@@ -1,7 +1,7 @@
 module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
-    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
     )
@@ -27,7 +27,7 @@ Load audio so you can later play it.
 
 Define what audio should be playing.
 
-@docs Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+@docs Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
 
 
 # Audio effects
@@ -74,7 +74,35 @@ type alias Model_ userMsg userModel =
     , requestCount : Int
     , pendingRequests : Dict Int (AudioLoadRequest_ userMsg)
     , samplesPerSecond : Maybe Int
+    , sourceData : Dict Int SourceData
     }
+
+
+type alias SourceData =
+    { duration : Duration }
+
+
+type AudioData
+    = AudioData
+        { sourceData : Dict Int SourceData
+        }
+
+
+audioData : Model userMsg userModel -> AudioData
+audioData (Model model) =
+    { sourceData = model.sourceData
+    }
+        |> AudioData
+
+
+{-| Get how long an audio source plays for.
+-}
+sourceDuration : Source -> AudioData -> Duration
+sourceDuration source (AudioData audioData_) =
+    Dict.get (audioSourceBufferId source |> rawBufferId) audioData_.sourceData
+        |> Maybe.map .duration
+        -- We should always be able to find the bufferId so this should never default to 0.
+        |> Maybe.withDefault Quantity.zero
 
 
 {-| -}
@@ -150,16 +178,16 @@ getUserModel (Model model) =
 -}
 elementWithAudio :
     { init : flags -> ( model, Cmd msg, AudioCmd msg )
-    , view : model -> Html msg
-    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
-    , subscriptions : model -> Sub msg
-    , audio : model -> Audio
+    , view : AudioData -> model -> Html msg
+    , update : AudioData -> msg -> model -> ( model, Cmd msg, AudioCmd msg )
+    , subscriptions : AudioData -> model -> Sub msg
+    , audio : AudioData -> model -> Audio
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
 elementWithAudio app =
     { init = app.init >> initHelper app.audioPort.toJS app.audio
-    , view = getUserModel >> app.view >> Html.map UserMsg
+    , view = \model -> getUserModel model |> app.view (audioData model) |> Html.map UserMsg
     , update = update app
     , subscriptions = subscriptions app
     }
@@ -170,10 +198,10 @@ elementWithAudio app =
 -}
 documentWithAudio :
     { init : flags -> ( model, Cmd msg, AudioCmd msg )
-    , view : model -> Browser.Document msg
-    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
-    , subscriptions : model -> Sub msg
-    , audio : model -> Audio
+    , view : AudioData -> model -> Browser.Document msg
+    , update : AudioData -> msg -> model -> ( model, Cmd msg, AudioCmd msg )
+    , subscriptions : AudioData -> model -> Sub msg
+    , audio : AudioData -> model -> Audio
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
@@ -183,7 +211,7 @@ documentWithAudio app =
         \model ->
             let
                 { title, body } =
-                    app.view (getUserModel model)
+                    app.view (audioData model) (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
@@ -198,12 +226,12 @@ documentWithAudio app =
 -}
 applicationWithAudio :
     { init : flags -> Url -> Key -> ( model, Cmd msg, AudioCmd msg )
-    , view : model -> Browser.Document msg
-    , update : msg -> model -> ( model, Cmd msg, AudioCmd msg )
-    , subscriptions : model -> Sub msg
+    , view : AudioData -> model -> Browser.Document msg
+    , update : AudioData -> msg -> model -> ( model, Cmd msg, AudioCmd msg )
+    , subscriptions : AudioData -> model -> Sub msg
     , onUrlRequest : Browser.UrlRequest -> msg
     , onUrlChange : Url -> msg
-    , audio : model -> Audio
+    , audio : AudioData -> model -> Audio
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
@@ -213,7 +241,7 @@ applicationWithAudio app =
         \model ->
             let
                 { title, body } =
-                    app.view (getUserModel model)
+                    app.view (audioData model) (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
@@ -230,13 +258,13 @@ applicationWithAudio app =
 -}
 lamderaFrontendWithAudio :
     { init : Url.Url -> Browser.Navigation.Key -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
-    , view : model -> Browser.Document frontendMsg
-    , update : frontendMsg -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
-    , updateFromBackend : toFrontend -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
-    , subscriptions : model -> Sub frontendMsg
+    , view : AudioData -> model -> Browser.Document frontendMsg
+    , update : AudioData -> frontendMsg -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
+    , updateFromBackend : AudioData -> toFrontend -> model -> ( model, Cmd frontendMsg, AudioCmd frontendMsg )
+    , subscriptions : AudioData -> model -> Sub frontendMsg
     , onUrlRequest : Browser.UrlRequest -> frontendMsg
     , onUrlChange : Url -> frontendMsg
-    , audio : model -> Audio
+    , audio : AudioData -> model -> Audio
     , audioPort : Ports frontendMsg
     }
     ->
@@ -254,7 +282,7 @@ lamderaFrontendWithAudio app =
         \model ->
             let
                 { title, body } =
-                    app.view (getUserModel model)
+                    app.view (audioData model) (getUserModel model)
             in
             { title = title
             , body = body |> List.map (Html.map UserMsg)
@@ -262,7 +290,7 @@ lamderaFrontendWithAudio app =
     , update = update app
     , updateFromBackend =
         \toFrontend model ->
-            updateHelper app.audioPort.toJS app.audio (app.updateFromBackend toFrontend) model
+            updateHelper app.audioPort.toJS app.audio (flip app.updateFromBackend toFrontend) model
     , subscriptions = subscriptions app
     , onUrlRequest = app.onUrlRequest >> UserMsg
     , onUrlChange = app.onUrlChange >> UserMsg
@@ -288,6 +316,7 @@ migrateModel msgMigrate modelMigrate (Model model) =
         , audioState = model.audioState
         , pendingRequests = Dict.map (\_ value -> mapAudioLoadRequest msgMigrate value) model.pendingRequests
         , requestCount = model.requestCount
+        , sourceData = model.sourceData
         }
     , cmd
     )
@@ -315,6 +344,7 @@ withUserModel userModel_ (Model model) =
     , audioState = model.audioState
     , pendingRequests = model.pendingRequests
     , requestCount = model.requestCount
+    , sourceData = model.sourceData
     }
         |> Model
 
@@ -336,23 +366,27 @@ mapUserMsg map (Model model) =
                     }
                 )
     , requestCount = model.requestCount
+    , sourceData = model.sourceData
     }
         |> Model
 
 
 updateHelper :
     (JD.Value -> Cmd (Msg userMsg))
-    -> (userModel -> Audio)
-    -> (userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg ))
+    -> (AudioData -> userModel -> Audio)
+    -> (AudioData -> userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg ))
     -> Model userMsg userModel
     -> ( Model userMsg userModel, Cmd (Msg userMsg) )
 updateHelper audioPort audioFunc userUpdate (Model model) =
     let
+        audioData_ =
+            audioData (Model model)
+
         ( newUserModel, userCmd, audioCmds ) =
-            userUpdate model.userModel
+            userUpdate audioData_ model.userModel
 
         ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState model.nodeGroupIdCounter model.audioState (audioFunc newUserModel)
+            diffAudioState model.nodeGroupIdCounter model.audioState (audioFunc audioData_ newUserModel)
 
         newModel : Model userMsg userModel
         newModel =
@@ -379,13 +413,13 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
 
 initHelper :
     (JD.Value -> Cmd (Msg userMsg))
-    -> (model -> Audio)
+    -> (AudioData -> model -> Audio)
     -> ( model, Cmd userMsg, AudioCmd userMsg )
     -> ( Model userMsg model, Cmd (Msg userMsg) )
 initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     let
         ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState 0 Dict.empty (audioFunc model)
+            diffAudioState 0 Dict.empty (audioFunc (AudioData { sourceData = Dict.empty }) model)
 
         initialModel =
             Model
@@ -395,6 +429,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
                 , requestCount = 0
                 , pendingRequests = Dict.empty
                 , samplesPerSecond = Nothing
+                , sourceData = Dict.empty
                 }
 
         ( initialModel2, audioRequests ) =
@@ -451,11 +486,16 @@ removeAt index l =
                 List.append head t
 
 
+flip : (c -> b -> a) -> b -> c -> a
+flip func a b =
+    func b a
+
+
 update :
     { a
         | audioPort : Ports userMsg
-        , audio : userModel -> Audio
-        , update : userMsg -> userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg )
+        , audio : AudioData -> userModel -> Audio
+        , update : AudioData -> userMsg -> userModel -> ( userModel, Cmd userMsg, AudioCmd userMsg )
     }
     -> Msg userMsg
     -> Model userMsg userModel
@@ -463,7 +503,7 @@ update :
 update app msg (Model model) =
     case msg of
         UserMsg userMsg ->
-            updateHelper app.audioPort.toJS app.audio (app.update userMsg) (Model model)
+            updateHelper app.audioPort.toJS app.audio (flip app.update userMsg) (Model model)
 
         FromJSMsg response ->
             case response of
@@ -471,28 +511,40 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
-                                a =
+                                source =
                                     { bufferId = bufferId } |> File |> Ok
 
-                                b =
-                                    Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
+                                maybeUserMsg =
+                                    Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) source)
+
+                                sourceData =
+                                    Dict.insert (rawBufferId bufferId) { duration = duration } model.sourceData
                             in
-                            case b of
+                            case maybeUserMsg of
                                 Just ( _, userMsg ) ->
-                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                    { model
+                                        | pendingRequests = Dict.remove requestId model.pendingRequests
+                                        , sourceData = sourceData
+                                    }
                                         |> Model
                                         |> updateHelper
                                             app.audioPort.toJS
                                             app.audio
-                                            (app.update userMsg)
+                                            (flip app.update userMsg)
 
                                 Nothing ->
-                                    { model | pendingRequests = Dict.remove requestId model.pendingRequests }
+                                    { model
+                                        | pendingRequests = Dict.remove requestId model.pendingRequests
+                                        , sourceData = sourceData
+                                    }
                                         |> Model
                                         |> updateHelper
                                             app.audioPort.toJS
                                             app.audio
-                                            (Nonempty.head pendingRequest.userMsg |> Tuple.second |> app.update)
+                                            (Nonempty.head pendingRequest.userMsg
+                                                |> Tuple.second
+                                                |> flip app.update
+                                            )
 
                         Nothing ->
                             ( Model model, Cmd.none )
@@ -514,7 +566,7 @@ update app msg (Model model) =
                                         |> updateHelper
                                             app.audioPort.toJS
                                             app.audio
-                                            (app.update userMsg)
+                                            (flip app.update userMsg)
 
                                 Nothing ->
                                     { model | pendingRequests = Dict.remove requestId model.pendingRequests }
@@ -522,7 +574,7 @@ update app msg (Model model) =
                                         |> updateHelper
                                             app.audioPort.toJS
                                             app.audio
-                                            (Nonempty.head pendingRequest.userMsg |> Tuple.second |> app.update)
+                                            (Nonempty.head pendingRequest.userMsg |> Tuple.second |> flip app.update)
 
                         Nothing ->
                             ( Model model, Cmd.none )
@@ -535,11 +587,11 @@ update app msg (Model model) =
 
 
 subscriptions :
-    { a | subscriptions : userModel -> Sub userMsg, audioPort : Ports userMsg }
+    { a | subscriptions : AudioData -> userModel -> Sub userMsg, audioPort : Ports userMsg }
     -> Model userMsg userModel
     -> Sub (Msg userMsg)
 subscriptions app (Model model) =
-    Sub.batch [ app.subscriptions model.userModel |> Sub.map UserMsg, app.audioPort.fromJS fromJSPortSub ]
+    Sub.batch [ app.subscriptions (audioData (Model model)) model.userModel |> Sub.map UserMsg, app.audioPort.fromJS fromJSPortSub ]
 
 
 decodeLoadError =
@@ -558,6 +610,7 @@ decodeLoadError =
             )
 
 
+decodeFromJSMsg : JD.Decoder FromJSMsg
 decodeFromJSMsg =
     JD.field "type" JD.int
         |> JD.andThen
@@ -602,6 +655,11 @@ fromJSPortSub json =
 
 type BufferId
     = BufferId Int
+
+
+rawBufferId : BufferId -> Int
+rawBufferId (BufferId bufferId) =
+    bufferId
 
 
 encodeBufferId (BufferId bufferId) =
