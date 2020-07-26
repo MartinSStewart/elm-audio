@@ -1,5 +1,5 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
@@ -13,7 +13,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
 
 
 # Load audio
@@ -82,6 +82,9 @@ type alias SourceData =
     { duration : Duration }
 
 
+{-| Stores information about audio files you have loaded.
+You can query how long an audio file plays for with `sourceDuration`.
+-}
 type AudioData
     = AudioData
         { sourceData : Dict Int SourceData
