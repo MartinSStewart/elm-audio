@@ -4,6 +4,7 @@ module Audio exposing
     , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
+    , offset
     )
 
 {-|
@@ -686,7 +687,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                 |> List.filter
                     (\( _, a ) ->
                         (a.source == audioGroup.source)
-                            && (a.startTime == audioGroup.startTime)
+                            && (audioStartTime a == audioStartTime audioGroup)
                             && (a.startAt == audioGroup.startAt)
                     )
     in
@@ -756,13 +757,18 @@ encodeStartSound nodeGroupId audio_ =
         [ ( "action", JE.string "startSound" )
         , ( "nodeGroupId", JE.int nodeGroupId )
         , ( "bufferId", audioSourceBufferId audio_.source |> encodeBufferId )
-        , ( "startTime", audio_.startTime |> encodeTime )
+        , ( "startTime", audioStartTime audio_ |> encodeTime )
         , ( "startAt", audio_.startAt |> encodeDuration )
         , ( "volume", JE.float audio_.volume )
         , ( "volumeTimelines", JE.list encodeVolumeTimeline audio_.volumeTimelines )
         , ( "loop", encodeLoopConfig audio_.loop )
         , ( "playbackRate", JE.float audio_.playbackRate )
         ]
+
+
+audioStartTime : FlattenedAudio -> Time.Posix
+audioStartTime audio_ =
+    Duration.addTo audio_.startTime audio_.offset
 
 
 encodeTime : Time.Posix -> JE.Value
@@ -896,6 +902,7 @@ type alias FlattenedAudio =
     { source : Source
     , startTime : Time.Posix
     , startAt : Duration
+    , offset : Duration
     , volume : Float
     , volumeTimelines : List (Nonempty ( Time.Posix, Float ))
     , loop : Maybe LoopConfig
@@ -914,6 +921,7 @@ flattenAudio audio_ =
               , startTime = startTime
               , startAt = settings.startAt
               , volume = 1
+              , offset = Quantity.zero
               , volumeTimelines = []
               , loop = settings.loop
               , playbackRate = settings.playbackRate
@@ -932,6 +940,11 @@ flattenAudio audio_ =
                         (\a -> { a | volumeTimelines = volumeAt :: a.volumeTimelines })
                         (flattenAudio effect.audio)
 
+                Offset duration ->
+                    List.map
+                        (\a -> { a | offset = Quantity.plus duration a.offset })
+                        (flattenAudio effect.audio)
+
 
 {-| Some kind of sound we want to play. To create `Audio` start with `audio`.
 -}
@@ -946,6 +959,7 @@ type Audio
 type EffectType
     = ScaleVolume { scaleBy : Float }
     | ScaleVolumeAt { volumeAt : Nonempty ( Time.Posix, Float ) }
+    | Offset Duration
 
 
 {-| Audio data we can use to play sounds
@@ -1074,6 +1088,23 @@ scaleVolumeAt volumeAt audio_ =
                         |> Nonempty.map (Tuple.mapSecond (max 0))
                         |> Nonempty.sortBy (Tuple.first >> Time.posixToMillis)
                 }
+        , audio = audio_
+        }
+
+
+{-| Add an offset to the audio.
+
+    import Audio
+    import Duration
+
+    delayByOneSecond audio =
+        Audio.translate Duration.second audio
+
+-}
+offset : Duration -> Audio -> Audio
+offset offset_ audio_ =
+    Effect
+        { effectType = Offset offset_
         , audio = audio_
         }
 
