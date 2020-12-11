@@ -1,10 +1,10 @@
 module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
-    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
+    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
-    , offset
+    , length, offsetBy
     )
 
 {-|
@@ -101,8 +101,8 @@ audioData (Model model) =
 
 {-| Get how long an audio source plays for.
 -}
-sourceDuration : Source -> AudioData -> Duration
-sourceDuration source (AudioData audioData_) =
+length : Source -> AudioData -> Duration
+length source (AudioData audioData_) =
     Dict.get (audioSourceBufferId source |> rawBufferId) audioData_.sourceData
         |> Maybe.map .duration
         -- We should always be able to find the bufferId so this should never default to 0.
@@ -1098,11 +1098,11 @@ scaleVolumeAt volumeAt audio_ =
     import Duration
 
     delayByOneSecond audio =
-        Audio.translate Duration.second audio
+        Audio.offsetBy Duration.second audio
 
 -}
-offset : Duration -> Audio -> Audio
-offset offset_ audio_ =
+offsetBy : Duration -> Audio -> Audio
+offsetBy offset_ audio_ =
     Effect
         { effectType = Offset offset_
         , audio = audio_
