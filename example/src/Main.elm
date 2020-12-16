@@ -1,6 +1,6 @@
 port module Main exposing (..)
 
-import Audio exposing (Audio, AudioCmd)
+import Audio exposing (Audio, AudioCmd, AudioData)
 import Duration
 import Html exposing (Html)
 import Html.Events
@@ -47,8 +47,8 @@ init _ =
     )
 
 
-update : Msg -> Model -> ( Model, Cmd Msg, AudioCmd Msg )
-update msg model =
+update : AudioData -> Msg -> Model -> ( Model, Cmd Msg, AudioCmd Msg )
+update _ msg model =
     case ( msg, model ) of
         ( SoundLoaded result, LoadingModel ) ->
             case result of
@@ -97,8 +97,8 @@ update msg model =
             ( model, Cmd.none, Audio.cmdNone )
 
 
-view : Model -> Html Msg
-view model =
+view : AudioData -> Model -> Html Msg
+view _ model =
     case model of
         LoadingModel ->
             Html.text "Loading..."
@@ -119,8 +119,8 @@ view model =
             Html.text "Failed to load sound."
 
 
-audio : Model -> Audio
-audio model =
+audio : AudioData -> Model -> Audio
+audio _ model =
     case model of
         LoadedModel loadedModel ->
             case loadedModel.soundState of
@@ -132,7 +132,7 @@ audio model =
 
                 FadingOut startTime stopTime ->
                     Audio.audio loadedModel.sound startTime
-                        |> Audio.scaleVolumeAt [ (stopTime, 1 ), ( Duration.addTo stopTime (Duration.seconds 2), 0 ) ]
+                        |> Audio.scaleVolumeAt [ ( stopTime, 1 ), ( Duration.addTo stopTime (Duration.seconds 2), 0 ) ]
 
         _ ->
             Audio.silence
@@ -150,7 +150,7 @@ main =
         { init = init
         , update = update
         , view = view
-        , subscriptions = always Sub.none
+        , subscriptions = \_ _ -> Sub.none
         , audio = audio
         , audioPort = { toJS = audioPortToJS, fromJS = audioPortFromJS }
         }

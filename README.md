@@ -6,8 +6,8 @@ This package explores the following question:
 
 To do that, elm-audio adds a `audio` field to your app. It looks something like this:
 ```elm
-audio : Model -> Audio
-audio model =
+audio : AudioData -> Model -> Audio
+audio _ model =
     if model.soundOn then
         Audio.audio model.music model.musicStartTime
     else
@@ -31,7 +31,7 @@ Notice that we don't need to write code to explicitly start and stop our music. 
 
 Make sure you install `ianmackenzie/elm-units` and `elm/time` as this package uses [`Duration`](https://package.elm-lang.org/packages/ianmackenzie/elm-units/latest/Duration#Duration) and [`Posix`](https://package.elm-lang.org/packages/elm/time/latest/Time#Posix) throughout the API.
 
-Here is a simple [example app](https://ellie-app.com/8Nh85ghZWQ5a1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
+Here is a simple [example app](https://ellie-app.com/bPKQ4BLCtFKa1) (source code is also [here](https://github.com/MartinSStewart/elm-audio/tree/master/example)) that's a good starting point if you want to begin making something with `elm-audio`.
 
 If you want to see a more interesting use case, I rewrote the audio system in [elm-mogee](https://github.com/MartinSStewart/elm-mogee/tree/elm-audio) to use `elm-audio`.
 

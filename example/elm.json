@@ -6,7 +6,7 @@
   "elm-version": "0.19.1",
   "dependencies": {
     "direct": {
-      "MartinSStewart/elm-audio": "3.0.2",
+      "MartinSStewart/elm-audio": "4.0.0",
       "elm/browser": "1.0.2",
       "elm/core": "1.0.5",
       "elm/url": "1.0.0",

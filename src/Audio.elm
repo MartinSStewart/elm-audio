@@ -83,8 +83,8 @@ type alias SourceData =
     { duration : Duration }
 
 
-{-| Stores information about audio files you have loaded.
-You can query how long an audio file plays for with `sourceDuration`.
+{-| Information about audio files you have loaded.
+You can query how long an audio file plays for with `length`.
 -}
 type AudioData
     = AudioData
