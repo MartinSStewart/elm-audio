@@ -59,7 +59,9 @@ import Time
 import Url exposing (Url)
 
 
-{-| -}
+{-| The top level model for our program.
+This contains the model for your app as well as extra data needed to keep track of what audio is playing.
+-}
 type Model userMsg userModel
     = Model (Model_ userMsg userModel)
 
@@ -109,7 +111,9 @@ length source (AudioData audioData_) =
         |> Maybe.withDefault Quantity.zero
 
 
-{-| -}
+{-| The top level msg for our program.
+This contains the msg type your app uses in addition to msgs that are needed to handle when audio gets loaded.
+-}
 type Msg userMsg
     = FromJSMsg FromJSMsg
     | UserMsg userMsg
@@ -147,7 +151,7 @@ cmdNone =
     AudioCmdGroup []
 
 
-{-| Map a command from one type to another. Conceptually the same as Cmd.map
+{-| Map a command from one type to another. Conceptually the same as Cmd.map.
 -}
 cmdMap : (a -> b) -> AudioCmd a -> AudioCmd b
 cmdMap map cmd =
@@ -598,6 +602,7 @@ subscriptions app (Model model) =
     Sub.batch [ app.subscriptions (audioData (Model model)) model.userModel |> Sub.map UserMsg, app.audioPort.fromJS fromJSPortSub ]
 
 
+decodeLoadError : JD.Decoder LoadError
 decodeLoadError =
     JD.string
         |> JD.andThen
@@ -669,10 +674,12 @@ rawBufferId (BufferId bufferId) =
     bufferId
 
 
+encodeBufferId : BufferId -> JE.Value
 encodeBufferId (BufferId bufferId) =
     JE.int bufferId
 
 
+decodeBufferId : JD.Decoder BufferId
 decodeBufferId =
     JD.int |> JD.map BufferId
 
@@ -820,7 +827,7 @@ encodeSetPlaybackRate nodeGroupId playbackRate =
 
 
 {-| A nonempty list of (time, volume) points for defining how loud a sound should be at any point in time.
-The points don't need to be sorted but don't include multiple points that have the same time.
+The points don't need to be sorted but you should avoid including multiple points that have the same time.
 -}
 type alias VolumeTimeline =
     Nonempty ( Time.Posix, Float )
@@ -1128,10 +1135,10 @@ silence =
 
 {-| Possible errors we can get when loading audio source files.
 
-    - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode 404 page.
+    - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode a 404 page instead.
     - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue or you're disconnected from the internet.
-    - UnknownError: We don't know what happened but you're audio didn't load!
-    - ErrorThatHappensWhen...: Yes, there's a good reason this is here. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
+    - UnknownError: We don't know what happened but your audio didn't load!
+    - ErrorThatHappensWhen...: Yes, there's a good reason for this. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
 
 -}
 type LoadError
