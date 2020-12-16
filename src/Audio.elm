@@ -607,10 +607,13 @@ decodeLoadError =
                         JD.succeed NetworkError
 
                     "MediaDecodeAudioDataUnknownContentType" ->
-                        JD.succeed MediaDecodeAudioDataUnknownContentType
+                        JD.succeed FailedToDecode
+
+                    "DOMException: The buffer passed to decodeAudioData contains an unknown content type." ->
+                        JD.succeed FailedToDecode
 
                     _ ->
-                        JD.fail "Unknown load error"
+                        JD.succeed UnknownError
             )
 
 
@@ -1123,17 +1126,24 @@ silence =
     group []
 
 
-{-| Possible errors we can get when loading audio files.
+{-| Possible errors we can get when loading audio source files.
+
+    - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode 404 page.
+    - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue or you're disconnected from the internet.
+    - UnknownError: We don't know what happened but you're audio didn't load!
+    - ErrorThatHappensWhen...: Yes, there's a good reason this is here. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
+
 -}
 type LoadError
-    = MediaDecodeAudioDataUnknownContentType
+    = FailedToDecode
     | NetworkError
+    | UnknownError
     | ErrorThatHappensWhenYouLoadMoreThan1000SoundsDueToHackyWorkAroundToMakeThisPackageBehaveMoreLikeAnEffectPackage
 
 
 enumeratedResults : Nonempty (Result LoadError Source)
 enumeratedResults =
-    [ Err MediaDecodeAudioDataUnknownContentType, Err NetworkError ]
+    [ Err FailedToDecode, Err NetworkError, Err UnknownError ]
         ++ (List.range 0 1000 |> List.map (\bufferId -> { bufferId = BufferId bufferId } |> File |> Ok))
         |> Nonempty.Nonempty (Err ErrorThatHappensWhenYouLoadMoreThan1000SoundsDueToHackyWorkAroundToMakeThisPackageBehaveMoreLikeAnEffectPackage)
 
