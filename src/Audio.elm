@@ -1,10 +1,9 @@
 module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
-    , Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
-    , scaleVolume, scaleVolumeAt
+    , Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
+    , scaleVolume, scaleVolumeAt, offsetBy
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
-    , length, offsetBy
     )
 
 {-|
@@ -28,14 +27,14 @@ Load audio so you can later play it.
 
 Define what audio should be playing.
 
-@docs Audio, audio, group, silence, audioWithConfig, audioDefaultConfig, sourceDuration, PlayAudioConfig, LoopConfig
+@docs Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
 
 
 # Audio effects
 
 Effects you can apply to `Audio`.
 
-@docs scaleVolume, scaleVolumeAt
+@docs scaleVolume, scaleVolumeAt, offsetBy
 
 
 # Lamdera stuff
@@ -1109,6 +1108,14 @@ scaleVolumeAt volumeAt audio_ =
 
     delayByOneSecond audio =
         Audio.offsetBy Duration.second audio
+
+_An important detail to keep in mind:_
+You might want to use this to offset all your audio by a fixed amount.
+The reason is that there's a delay between when you decide what audio should play and when that change actually takes place.
+If we want to play a short beep sound immediately, the time when it should have finished playing might come before the audio actually gets updated!
+How much should you offset your audio by to account for this? It's best to experiment but fast responsive apps probably only need 20-30ms.
+If your app is a bit laggy at times, maybe something larger like 100ms.
+Don't make the delay too large though or the user will start to notice that the audio is playing late.
 
 -}
 offsetBy : Duration -> Audio -> Audio
