@@ -85,7 +85,7 @@ type alias SourceData =
 
 
 {-| Information about audio files you have loaded.
-You can query how long an audio file plays for with `length`.
+This is passed as a parameter to your update, view, subscriptions, and audio functions.
 -}
 type AudioData
     = AudioData
@@ -1109,12 +1109,15 @@ scaleVolumeAt volumeAt audio_ =
     delayByOneSecond audio =
         Audio.offsetBy Duration.second audio
 
-_An important detail to keep in mind:_
-You might want to use this to offset all your audio by a fixed amount.
-The reason is that there's a delay between when you decide what audio should play and when that change actually takes place.
+
+## An important detail to keep in mind
+
+You might want to delay all your audio by a small amount.
+
+The reason is that there's a delay between when `audio` returns what sounds should play and when that change actually takes place.
 If we want to play a short beep sound immediately, the time when it should have finished playing might come before the audio actually gets updated!
-How much should you offset your audio by to account for this? It's best to experiment but fast responsive apps probably only need 20-30ms.
-If your app is a bit laggy at times, maybe something larger like 100ms.
+How much should you offset your audio by to account for this? It's best to experiment but fast responsive apps probably only need 15-30ms.
+If your app is a bit laggy, maybe something larger like 100ms.
 Don't make the delay too large though or the user will start to notice that the audio is playing late.
 
 -}
@@ -1140,12 +1143,12 @@ silence =
     group []
 
 
-{-| Possible errors we can get when loading audio source files.
+{-| These are possible errors we can get when loading an audio source file.
 
-    - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode a 404 page instead.
-    - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue or you're disconnected from the internet.
-    - UnknownError: We don't know what happened but your audio didn't load!
-    - ErrorThatHappensWhen...: Yes, there's a good reason for this. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
+  - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode a 404 page instead.
+  - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue or you're disconnected from the internet.
+  - UnknownError: We don't know what happened but your audio didn't load!
+  - ErrorThatHappensWhen...: Yes, there's a good reason for this. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
 
 -}
 type LoadError
