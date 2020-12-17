@@ -1,4 +1,4 @@
-function startAudio(app)
+exports.init = async function init(app)
 {
     window.AudioContext = window.AudioContext || window.webkitAudioContext || false;
     if (window.AudioContext) {
@@ -9,8 +9,10 @@ function startAudio(app)
          * "All *decoders* I have tested introduce a delay of 528 samples. That
          * is, after decoding an mp3 file, the output will have 528 samples of
          * 0's appended to the front."
+         *
+         * Edit: Actually it seems like browsers already account for this lets set this to 0 instead.
          */
-        let mp3MarginInSamples = 528;
+        let mp3MarginInSamples = 0;
 
         app.ports.audioPortFromJS.send({ type: 2, samplesPerSecond: context.sampleRate });
 

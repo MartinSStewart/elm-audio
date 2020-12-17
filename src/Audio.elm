@@ -102,8 +102,8 @@ audioData (Model model) =
 
 {-| Get how long an audio source plays for.
 -}
-length : Source -> AudioData -> Duration
-length source (AudioData audioData_) =
+length : AudioData -> Source -> Duration
+length (AudioData audioData_) source =
     Dict.get (audioSourceBufferId source |> rawBufferId) audioData_.sourceData
         |> Maybe.map .duration
         -- We should always be able to find the bufferId so this should never default to 0.
