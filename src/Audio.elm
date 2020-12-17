@@ -192,13 +192,16 @@ elementWithAudio :
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
-elementWithAudio app =
-    { init = app.init >> initHelper app.audioPort.toJS app.audio
-    , view = \model -> getUserModel model |> app.view (audioData model) |> Html.map UserMsg
-    , update = update app
-    , subscriptions = subscriptions app
-    }
-        |> Browser.element
+elementWithAudio =
+    withAudioOffset
+        >> (\app ->
+                { init = app.init >> initHelper app.audioPort.toJS app.audio
+                , view = \model -> getUserModel model |> app.view (audioData model) |> Html.map UserMsg
+                , update = update app
+                , subscriptions = subscriptions app
+                }
+                    |> Browser.element
+           )
 
 
 {-| Browser.document but with the ability to play sounds.
@@ -212,21 +215,24 @@ documentWithAudio :
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
-documentWithAudio app =
-    { init = app.init >> initHelper app.audioPort.toJS app.audio
-    , view =
-        \model ->
-            let
-                { title, body } =
-                    app.view (audioData model) (getUserModel model)
-            in
-            { title = title
-            , body = body |> List.map (Html.map UserMsg)
-            }
-    , update = update app
-    , subscriptions = subscriptions app
-    }
-        |> Browser.document
+documentWithAudio =
+    withAudioOffset
+        >> (\app ->
+                { init = app.init >> initHelper app.audioPort.toJS app.audio
+                , view =
+                    \model ->
+                        let
+                            { title, body } =
+                                app.view (audioData model) (getUserModel model)
+                        in
+                        { title = title
+                        , body = body |> List.map (Html.map UserMsg)
+                        }
+                , update = update app
+                , subscriptions = subscriptions app
+                }
+                    |> Browser.document
+           )
 
 
 {-| Browser.application but with the ability to play sounds.
@@ -242,23 +248,26 @@ applicationWithAudio :
     , audioPort : Ports msg
     }
     -> Platform.Program flags (Model msg model) (Msg msg)
-applicationWithAudio app =
-    { init = \flags url key -> app.init flags url key |> initHelper app.audioPort.toJS app.audio
-    , view =
-        \model ->
-            let
-                { title, body } =
-                    app.view (audioData model) (getUserModel model)
-            in
-            { title = title
-            , body = body |> List.map (Html.map UserMsg)
-            }
-    , update = update app
-    , subscriptions = subscriptions app
-    , onUrlRequest = app.onUrlRequest >> UserMsg
-    , onUrlChange = app.onUrlChange >> UserMsg
-    }
-        |> Browser.application
+applicationWithAudio =
+    withAudioOffset
+        >> (\app ->
+                { init = \flags url key -> app.init flags url key |> initHelper app.audioPort.toJS app.audio
+                , view =
+                    \model ->
+                        let
+                            { title, body } =
+                                app.view (audioData model) (getUserModel model)
+                        in
+                        { title = title
+                        , body = body |> List.map (Html.map UserMsg)
+                        }
+                , update = update app
+                , subscriptions = subscriptions app
+                , onUrlRequest = app.onUrlRequest >> UserMsg
+                , onUrlChange = app.onUrlChange >> UserMsg
+                }
+                    |> Browser.application
+           )
 
 
 {-| Lamdera.frontend but with the ability to play sounds (highly experimental, just ignore this for now).
@@ -283,25 +292,32 @@ lamderaFrontendWithAudio :
         , onUrlRequest : Browser.UrlRequest -> Msg frontendMsg
         , onUrlChange : Url -> Msg frontendMsg
         }
-lamderaFrontendWithAudio app =
-    { init = \url key -> initHelper app.audioPort.toJS app.audio (app.init url key)
-    , view =
-        \model ->
-            let
-                { title, body } =
-                    app.view (audioData model) (getUserModel model)
-            in
-            { title = title
-            , body = body |> List.map (Html.map UserMsg)
-            }
-    , update = update app
-    , updateFromBackend =
-        \toFrontend model ->
-            updateHelper app.audioPort.toJS app.audio (flip app.updateFromBackend toFrontend) model
-    , subscriptions = subscriptions app
-    , onUrlRequest = app.onUrlRequest >> UserMsg
-    , onUrlChange = app.onUrlChange >> UserMsg
-    }
+lamderaFrontendWithAudio =
+    withAudioOffset
+        >> (\app ->
+                { init = \url key -> initHelper app.audioPort.toJS app.audio (app.init url key)
+                , view =
+                    \model ->
+                        let
+                            { title, body } =
+                                app.view (audioData model) (getUserModel model)
+                        in
+                        { title = title
+                        , body = body |> List.map (Html.map UserMsg)
+                        }
+                , update = update app
+                , updateFromBackend =
+                    \toFrontend model ->
+                        updateHelper app.audioPort.toJS app.audio (flip app.updateFromBackend toFrontend) model
+                , subscriptions = subscriptions app
+                , onUrlRequest = app.onUrlRequest >> UserMsg
+                , onUrlChange = app.onUrlChange >> UserMsg
+                }
+           )
+
+
+withAudioOffset app =
+    { app | audio = \audioData_ model -> app.audio audioData_ model |> offsetBy (Duration.milliseconds 50) }
 
 
 {-| Use this function when migrating your model in Lamdera.
@@ -1108,17 +1124,6 @@ scaleVolumeAt volumeAt audio_ =
 
     delayByOneSecond audio =
         Audio.offsetBy Duration.second audio
-
-
-## An important detail to keep in mind
-
-You might want to delay all your audio by a small amount.
-
-The reason is that there's a delay between when `audio` returns what sounds should play and when that change actually takes place.
-If we want to play a short beep sound immediately, the time when it should have finished playing might come before the audio actually gets updated!
-How much should you offset your audio by to account for this? It's best to experiment but fast responsive apps probably only need 15-30ms.
-If your app is a bit laggy, maybe something larger like 100ms.
-Don't make the delay too large though or the user will start to notice that the audio is playing late.
 
 -}
 offsetBy : Duration -> Audio -> Audio
