@@ -1,4 +1,4 @@
-exports.init = async function init(app)
+function startAudio(app)
 {
     window.AudioContext = window.AudioContext || window.webkitAudioContext || false;
     if (window.AudioContext) {
