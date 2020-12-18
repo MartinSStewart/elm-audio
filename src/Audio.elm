@@ -736,7 +736,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                             [ encodeValue .volume encodeSetVolume
                             , encodeValue .loop encodeSetLoopConfig
                             , encodeValue .playbackRate encodeSetPlaybackRate
-                            , encodeValue .volumeTimelines encodeSetVolumeAt
+                            , encodeValue volumeTimelines encodeSetVolumeAt
                             ]
                                 |> List.filterMap identity
                     in
@@ -785,7 +785,7 @@ encodeStartSound nodeGroupId audio_ =
         , ( "startTime", audioStartTime audio_ |> encodeTime )
         , ( "startAt", audio_.startAt |> encodeDuration )
         , ( "volume", JE.float audio_.volume )
-        , ( "volumeTimelines", JE.list encodeVolumeTimeline audio_.volumeTimelines )
+        , ( "volumeTimelines", JE.list encodeVolumeTimeline (volumeTimelines audio_) )
         , ( "loop", encodeLoopConfig audio_.loop )
         , ( "playbackRate", JE.float audio_.playbackRate )
         ]
@@ -794,6 +794,13 @@ encodeStartSound nodeGroupId audio_ =
 audioStartTime : FlattenedAudio -> Time.Posix
 audioStartTime audio_ =
     Duration.addTo audio_.startTime audio_.offset
+
+
+volumeTimelines : FlattenedAudio -> List VolumeTimeline
+volumeTimelines audio_ =
+    List.map
+        (Nonempty.map (Tuple.mapFirst (\a -> Duration.addTo a audio_.offset)))
+        audio_.volumeTimelines
 
 
 encodeTime : Time.Posix -> JE.Value
@@ -849,11 +856,11 @@ type alias VolumeTimeline =
 
 
 encodeSetVolumeAt : NodeGroupId -> List VolumeTimeline -> JE.Value
-encodeSetVolumeAt nodeGroupId volumeTimelines =
+encodeSetVolumeAt nodeGroupId volumeTimelines_ =
     JE.object
         [ ( "nodeGroupId", JE.int nodeGroupId )
         , ( "action", JE.string "setVolumeAt" )
-        , ( "volumeAt", JE.list encodeVolumeTimeline volumeTimelines )
+        , ( "volumeAt", JE.list encodeVolumeTimeline volumeTimelines_ )
         ]
 
 
