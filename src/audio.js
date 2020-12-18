@@ -64,35 +64,44 @@ exports.init = async function init(app)
             }
         }
 
+        function interpolate(startAt, startValue, endAt, endValue, time) {
+            let t = (time - startAt) / (endAt - startAt);
+            if (Number.isFinite(t)) {
+                return t * (endValue - startValue) + startValue;
+            }
+            else {
+                return startValue;
+            }
+        }
+
         function createVolumeTimelineGainNodes(volumeAt, currentTime) {
             return volumeAt.map(volumeTimeline => {
                 let gainNode = context.createGain();
 
                 gainNode.gain.setValueAtTime(volumeTimeline[0].volume, 0);
-                gainNode.gain.linearRampToValueAtTime(
-                    volumeTimeline[0].volume,
-                    posixToContextTime(volumeTimeline[0].time, currentTime));
+                gainNode.gain.linearRampToValueAtTime(volumeTimeline[0].volume, 0);
+                let currentTime_ = posixToContextTime(currentTime, currentTime);
 
                 for (let j = 1; j < volumeTimeline.length; j++) {
-                    let timeAndValue = volumeTimeline[j];
                     let previous = volumeTimeline[j-1];
-                    let contextTime = posixToContextTime(timeAndValue.time, currentTime);
-                    if (contextTime >= context.currentTime && previous.contextTime < context.currentTime) {
-                        let t = (context.currentTime - previous.contextTime) / (contextTime - previous.contextTime);
-                        let volume = t * (timeAndValue.volume - previous.volume) + previous.volume;
+                    let previousTime = posixToContextTime(previous.time, currentTime);
+                    let next = volumeTimeline[j];
+                    let nextTime = posixToContextTime(next.time, currentTime);
 
-                        if (isFinite(volume)) {
-                            gainNode.gain.setValueAtTime(volume, 0);
-                        }
+                    if (nextTime > currentTime_ && currentTime_ >= previousTime) {
+                        let currentVolume = interpolate(previousTime, previous.volume, nextTime, next.volume, currentTime_);
+                        gainNode.gain.setValueAtTime(currentVolume, 0);
+                        gainNode.gain.linearRampToValueAtTime(next.volume, nextTime);
+
                     }
-                    else if (contextTime >= context.currentTime) {
-                        gainNode.gain.linearRampToValueAtTime(timeAndValue.volume, contextTime);
+                    else if (nextTime > currentTime_) {
+                        gainNode.gain.linearRampToValueAtTime(next.volume, nextTime);
                     }
                     else {
-                        gainNode.gain.setValueAtTime(timeAndValue.volume, 0);
+                        gainNode.gain.setValueAtTime(next.volume, 0);
                     }
-                    previous = { contextTime: contextTime, volume: timeAndValue.volume };
                 }
+
 
                 return gainNode;
             });
