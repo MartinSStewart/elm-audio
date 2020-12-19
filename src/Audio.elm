@@ -1158,7 +1158,7 @@ silence =
 {-| These are possible errors we can get when loading an audio source file.
 
   - FailedToDecode: This means we got the data but we couldn't decode it. One likely reason for this is that your url points to the wrong place and you're trying to decode a 404 page instead.
-  - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue or you're disconnected from the internet.
+  - NetworkError: We couldn't reach the url. Either it's some kind of CORS issue, the server is down, or you're disconnected from the internet.
   - UnknownError: We don't know what happened but your audio didn't load!
   - ErrorThatHappensWhen...: Yes, there's a good reason for this. If you need to load more than 1000 sounds make an issue about it on github and I'll see what I can do.
 
