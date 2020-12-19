@@ -5,5 +5,6 @@
 
 ## 4.0.0
 * The type signature of update, view, subscriptions, audio have changed. An `AudioData` parameter has been added.
-* Added `length` which lets you query `AudioData` for the duration of an audio file.
+* Added `length` which lets you query `AudioData` for the duration of `Source` sound files.
 * Loading audio no longer silently fails.
+* `setVolumeAt` no longer causes a runtime error if you set time points in the past.
