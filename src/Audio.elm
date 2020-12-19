@@ -53,7 +53,7 @@ import Html exposing (Html)
 import Json.Decode as JD
 import Json.Encode as JE
 import List.Nonempty as Nonempty exposing (Nonempty)
-import Quantity exposing (Quantity, Rate, Unitless)
+import Quantity
 import Time
 import Url exposing (Url)
 
@@ -355,43 +355,6 @@ migrateMsg msgMigrate msg =
 
         UserMsg userMsg ->
             msgMigrate userMsg |> Tuple.mapFirst UserMsg
-
-
-{-| Set the user state stored in `Model`. Useful for dealing with migrations in Lamdera.
--}
-withUserModel : userModelNew -> Model userMsg userModelOld -> Model userMsg userModelNew
-withUserModel userModel_ (Model model) =
-    { userModel = userModel_
-    , nodeGroupIdCounter = model.nodeGroupIdCounter
-    , samplesPerSecond = model.samplesPerSecond
-    , audioState = model.audioState
-    , pendingRequests = model.pendingRequests
-    , requestCount = model.requestCount
-    , sourceData = model.sourceData
-    }
-        |> Model
-
-
-{-| Change the `userMsg` type in `Model`. Useful for dealing with migrations in Lamdera.
--}
-mapUserMsg : (userMsgOld -> userMsgNew) -> Model userMsgOld userModel -> Model userMsgNew userModel
-mapUserMsg map (Model model) =
-    { userModel = model.userModel
-    , nodeGroupIdCounter = model.nodeGroupIdCounter
-    , samplesPerSecond = model.samplesPerSecond
-    , audioState = model.audioState
-    , pendingRequests =
-        model.pendingRequests
-            |> Dict.map
-                (\_ { userMsg, audioUrl } ->
-                    { userMsg = Nonempty.map (Tuple.mapSecond map) userMsg
-                    , audioUrl = audioUrl
-                    }
-                )
-    , requestCount = model.requestCount
-    , sourceData = model.sourceData
-    }
-        |> Model
 
 
 updateHelper :
