@@ -1003,7 +1003,7 @@ audioDefaultConfig =
         default =
             Audio.audioDefaultConfig
 
-        -- This package doesn't support getting how long a sound plays for so we need to hard code it instead.
+        -- We can use Audio.length to get the duration of coolBackgroundMusic but for simplicity it's hardcoded in this example
         songLength =
             Duration.seconds 120
     in
