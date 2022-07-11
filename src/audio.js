@@ -119,7 +119,30 @@ function startAudio(app)
                 ? mp3MarginInSamples / context.sampleRate
                 : 0;
             let source = context.createBufferSource();
-            source.buffer = buffer;
+
+            if (loop) {
+                // Add an extra 2 seconds so there's some room if the loopEnd gets moved back later
+                let durationInSeconds = 2 + (loop.loopEnd / 1000) - (buffer.length / buffer.sampleRate);
+                if (durationInSeconds > 0) {
+
+                    let sampleCount = Math.ceil(durationInSeconds * buffer.sampleRate);
+                    let result = Float32Array.of(...buffer.getChannelData(0), ...new Float32Array(sampleCount));
+                    let newBuffer = context.createBuffer(buffer.numberOfChannels, result.length, context.sampleRate);
+                    newBuffer.copyToChannel(result, 0);
+
+                    for (let i = 1; i < buffer.numberOfChannels; i++) {
+                        newBuffer.copyToChannel(buffer.getChannelData(i), i);
+                    }
+                    source.buffer = newBuffer
+                }
+                else {
+                    source.buffer = buffer;
+                }
+            }
+            else {
+                source.buffer = buffer;
+            }
+
             source.playbackRate.value = playbackRate;
             setLoop(source, loop, mp3MarginInSeconds);
 
@@ -184,7 +207,13 @@ function startAudio(app)
                         let mp3MarginInSeconds = audioBuffer.isMp3
                             ? mp3MarginInSamples / context.sampleRate
                             : 0;
-                        setLoop(value.nodes.sourceNode, value.loop, mp3MarginInSeconds);
+
+                        /* TODO: Resizing the buffer if the loopEnd value is past the end of the buffer.
+                           This might not be possible to do so the alternative is to create a new audio
+                           node (this will probably cause a popping sound and audio that is slightly out of sync).
+                         */
+
+                        setLoop(value.nodes.sourceNode, audio.loop, mp3MarginInSeconds);
                         break;
                     }
                     case "setPlaybackRate":

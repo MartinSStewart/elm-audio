@@ -9,3 +9,11 @@
 * Added `length` which lets you query `AudioData` for the duration of `Source` sound files.
 * Loading audio no longer silently fails.
 * `setVolumeAt` no longer causes a runtime error if you set time points in the past.
+
+## 4.0.1
+* Fix mistake in documentation
+
+## 4.0.2
+* Fix typo in documentation
+* Fixed a bug where audio with loopEnd set to a value larger than the audio duration would loop at the end of the audio instead of at the loopEnd time.
+* Fixed a bug where changing the loop settings would cause the audio to stop playing.

@@ -1019,7 +1019,7 @@ type alias LoopConfig =
 
 {-| Play audio from an audio source at a given time. This is the same as using `audioWithConfig audioDefaultConfig`.
 
-Note that in some browsers audio will be muted until user interacts with the webpage.
+Note that in some browsers audio will be muted until the user interacts with the webpage.
 
 -}
 audio : Source -> Time.Posix -> Audio
@@ -1029,7 +1029,7 @@ audio source startTime =
 
 {-| Play audio from an audio source at a given time with config.
 
-Note that in some browsers audio will be muted until user interacts with the webpage.
+Note that in some browsers audio will be muted until the user interacts with the webpage.
 
 -}
 audioWithConfig : PlayAudioConfig -> Source -> Time.Posix -> Audio

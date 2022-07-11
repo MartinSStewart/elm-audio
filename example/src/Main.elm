@@ -103,8 +103,8 @@ view _ model =
         LoadingModel ->
             Html.text "Loading..."
 
-        LoadedModel loadingModel ->
-            case loadingModel.soundState of
+        LoadedModel loadedModel ->
+            case loadedModel.soundState of
                 Playing _ ->
                     Html.div
                         []
