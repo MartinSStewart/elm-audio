@@ -121,16 +121,14 @@ function startAudio(app)
             let source = context.createBufferSource();
 
             if (loop) {
-                // Add an extra 2 seconds so there's some room if the loopEnd gets moved back later
-                let durationInSeconds = 2 + (loop.loopEnd / 1000) - (buffer.length / buffer.sampleRate);
+                // Add an extra 10 seconds so there's some room if the loopEnd gets moved back later
+                let durationInSeconds = 10 + (loop.loopEnd / 1000) - (buffer.length / buffer.sampleRate);
                 if (durationInSeconds > 0) {
 
-                    let sampleCount = Math.ceil(durationInSeconds * buffer.sampleRate);
-                    let result = Float32Array.of(...buffer.getChannelData(0), ...new Float32Array(sampleCount));
-                    let newBuffer = context.createBuffer(buffer.numberOfChannels, result.length, context.sampleRate);
-                    newBuffer.copyToChannel(result, 0);
+                    let sampleCount = buffer.getChannelData(0).length + Math.ceil(durationInSeconds * buffer.sampleRate);
+                    let newBuffer = context.createBuffer(buffer.numberOfChannels, sampleCount, context.sampleRate);
 
-                    for (let i = 1; i < buffer.numberOfChannels; i++) {
+                    for (let i = 0; i < buffer.numberOfChannels; i++) {
                         newBuffer.copyToChannel(buffer.getChannelData(i), i);
                     }
                     source.buffer = newBuffer
