@@ -17,3 +17,6 @@
 * Fix typo in documentation
 * Fixed a bug where audio with loopEnd set to a value larger than the audio duration would loop at the end of the audio instead of at the loopEnd time.
 * Fixed a bug where changing the loop settings would cause the audio to stop playing.
+
+## 4.0.3
+* Fix loop bug in audio.js (make sure to update copy over the new audio.js code!)

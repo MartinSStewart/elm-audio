@@ -3,7 +3,7 @@
     "name": "MartinSStewart/elm-audio",
     "summary": "Play sound effects and music in a declarative way",
     "license": "BSD-3-Clause",
-    "version": "4.0.2",
+    "version": "4.0.3",
     "exposed-modules": [
         "Audio"
     ],
@@ -19,6 +19,6 @@
         "mgold/elm-nonempty-list": "4.1.0 <= v < 5.0.0"
     },
     "test-dependencies": {
-        "elm-explorations/test": "1.0.0 <= v < 2.0.0"
+        "elm-explorations/test": "2.0.0 <= v < 3.0.0"
     }
 }
