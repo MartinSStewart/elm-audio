@@ -1,9 +1,14 @@
+/**
+ * @param {{ ports: { audioPortFromJS: { send: (arg: { type: number; samplesPerSecond?: number; requestId?: number; error?: any; bufferId?: number; durationInSeconds?: number; }) => void; }; audioPortToJS: { subscribe: (arg: (message: any) => void) => void; }; }; }} app
+ */
 function startAudio(app) {
     window.AudioContext =
         window.AudioContext || window.webkitAudioContext || false;
     if (window.AudioContext) {
+        /** @type {AudioBuffer[]} */
         let audioBuffers = [];
         let context = new AudioContext();
+        /** @type {{ [key: number]: { bufferId: any; nodes: {sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] } } }} */
         let audioPlaying = {};
 
         app.ports.audioPortFromJS.send({
@@ -11,6 +16,9 @@ function startAudio(app) {
             samplesPerSecond: context.sampleRate,
         });
 
+        /**
+         * @param {{ audioUrl: string; requestId: number }} audio
+         */
         async function loadAudio(audio) {
             let responseBuffer;
             try {
@@ -46,10 +54,18 @@ function startAudio(app) {
             }
         }
 
+        /**
+         * @param {number} posix
+         * @param {number} currentTimePosix
+         */
         function posixToContextTime(posix, currentTimePosix) {
             return (posix - currentTimePosix) / 1000 + context.currentTime;
         }
 
+        /**
+         * @param {AudioBufferSourceNode} sourceNode
+         * @param {{ loopStart: number; loopEnd: number; } | null} loop
+         */
         function setLoop(sourceNode, loop) {
             if (loop) {
                 sourceNode.loopStart = loop.loopStart / 1000;
@@ -60,6 +76,13 @@ function startAudio(app) {
             }
         }
 
+        /**
+         * @param {number} startAt
+         * @param {number} startValue
+         * @param {number} endAt
+         * @param {number} endValue
+         * @param {number} time
+         */
         function interpolate(startAt, startValue, endAt, endValue, time) {
             let t = (time - startAt) / (endAt - startAt);
             if (Number.isFinite(t)) {
@@ -69,6 +92,10 @@ function startAudio(app) {
             }
         }
 
+        /**
+         * @param {{ volume: number; time: number; }[][]} volumeAt
+         * @param {number} currentTime
+         */
         function createVolumeTimelineGainNodes(volumeAt, currentTime) {
             return volumeAt.map((volumeTimeline) => {
                 let gainNode = context.createGain();
@@ -119,12 +146,26 @@ function startAudio(app) {
             });
         }
 
+        /**
+         * @param {AudioNode[]} nodes
+         */
         function connectNodes(nodes) {
             for (let j = 1; j < nodes.length; j++) {
                 nodes[j - 1].connect(nodes[j]);
             }
         }
 
+        /**
+         * @param {AudioBuffer} buffer
+         * @param {number} volume
+         * @param {{ volume: number; time: number; }[][]} volumeTimelines
+         * @param {number} startTime
+         * @param {number} startAt
+         * @param {number} currentTime
+         * @param {{ loopEnd: number; loopStart: number; } | null} loop
+         * @param {number} playbackRate
+         * @returns {{ sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] }}
+         */
         function playSound(
             buffer,
             volume,
@@ -207,7 +248,7 @@ function startAudio(app) {
                 switch (audio.action) {
                     case "stopSound": {
                         let value = audioPlaying[audio.nodeGroupId];
-                        audioPlaying[audio.nodeGroupId] = null;
+                        delete audioPlaying[audio.nodeGroupId];
                         value.nodes.sourceNode.stop();
                         value.nodes.sourceNode.disconnect();
                         value.nodes.gainNode.disconnect();
@@ -249,9 +290,9 @@ function startAudio(app) {
                         let value = audioPlaying[audio.nodeGroupId];
 
                         /* TODO: Resizing the buffer if the loopEnd value is past the end of the buffer.
-                           This might not be possible to do so the alternative is to create a new audio
-                           node (this will probably cause a popping sound and audio that is slightly out of sync).
-                         */
+                        This might not be possible to do so the alternative is to create a new audio
+                        node (this will probably cause a popping sound and audio that is slightly out of sync).
+                        */
 
                         setLoop(value.nodes.sourceNode, audio.loop);
                         break;
