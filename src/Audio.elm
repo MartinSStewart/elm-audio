@@ -318,6 +318,9 @@ lamderaFrontendWithAudio =
            )
 
 
+withAudioOffset :
+    { a | audio : AudioData -> model -> Audio }
+    -> { a | audio : AudioData -> model -> Audio }
 withAudioOffset app =
     { app | audio = \audioData_ model -> app.audio audioData_ model |> offsetBy (Duration.milliseconds 50) }
 
@@ -367,6 +370,7 @@ updateHelper :
     -> ( Model userMsg userModel, Cmd (Msg userMsg) )
 updateHelper audioPort audioFunc userUpdate (Model model) =
     let
+        audioData_ : AudioData
         audioData_ =
             audioData (Model model)
 
@@ -388,6 +392,7 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
         ( newModel2, audioRequests ) =
             audioCmds |> encodeAudioCmd newModel
 
+        portMessage : JE.Value
         portMessage =
             JE.object
                 [ ( "audio", JE.list identity json )
@@ -409,6 +414,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
         ( audioState, newNodeGroupIdCounter, json ) =
             diffAudioState 0 Dict.empty (audioFunc (AudioData { sourceData = Dict.empty }) model)
 
+        initialModel : Model userMsg model
         initialModel =
             Model
                 { audioState = audioState
@@ -459,16 +465,13 @@ removeAt index l =
         l
 
     else
-        let
-            tail =
-                List.drop index l |> List.tail
-        in
-        case tail of
-            Nothing ->
+        case List.drop index l of
+            [] ->
                 l
 
-            Just t ->
+            _ :: t ->
                 let
+                    head : List a
                     head =
                         List.take index l
                 in
@@ -500,12 +503,15 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
+                                source : Result error Source
                                 source =
                                     { bufferId = bufferId } |> File |> Ok
 
+                                maybeUserMsg : Maybe ( Result LoadError Source, userMsg )
                                 maybeUserMsg =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) source)
 
+                                sourceData : Dict Int { duration : Duration }
                                 sourceData =
                                     Dict.insert (rawBufferId bufferId) { duration = duration } model.sourceData
                             in
@@ -542,9 +548,11 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
+                                a : Result LoadError value
                                 a =
                                     Err error
 
+                                b : Maybe ( Result LoadError Source, userMsg )
                                 b =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
                             in
@@ -691,6 +699,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
             case validAudio of
                 ( index, a ) :: _ ->
                     let
+                        encodeValue : (FlattenedAudio -> a) -> (NodeGroupId -> a -> b) -> Maybe b
                         encodeValue getter encoder =
                             if getter audioGroup == getter a then
                                 Nothing
@@ -698,6 +707,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                             else
                                 encoder nodeGroupId (getter a) |> Just
 
+                        effects : List JE.Value
                         effects =
                             [ encodeValue .volume encodeSetVolume
                             , encodeValue .loop encodeSetLoopConfig
@@ -966,6 +976,7 @@ type Source
     = File { bufferId : BufferId }
 
 
+audioSourceBufferId : Source -> BufferId
 audioSourceBufferId (File audioSource) =
     audioSource.bufferId
 
