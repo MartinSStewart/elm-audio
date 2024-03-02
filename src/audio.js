@@ -11,46 +11,38 @@ function startAudio(app) {
             samplesPerSecond: context.sampleRate,
         });
 
-        function loadAudio(audioUrl, requestId) {
-            let request = new XMLHttpRequest();
-            request.open("GET", audioUrl, true);
-
-            request.responseType = "arraybuffer";
-
-            request.onerror = function () {
+        async function loadAudio(audio) {
+            let responseBuffer;
+            try {
+                const response = await fetch(audio.audioUrl);
+                responseBuffer = await response.arrayBuffer();
+            } catch {
                 app.ports.audioPortFromJS.send({
                     type: 0,
-                    requestId: requestId,
+                    requestId: audio.requestId,
                     error: "NetworkError",
                 });
-            };
+            }
 
-            // Decode asynchronously
-            request.onload = function () {
-                context.decodeAudioData(
-                    request.response,
-                    function (buffer) {
-                        let bufferId = audioBuffers.length;
-                        audioBuffers.push(buffer);
+            try {
+                const buffer = await context.decodeAudioData(responseBuffer);
 
-                        app.ports.audioPortFromJS.send({
-                            type: 1,
-                            requestId: requestId,
-                            bufferId: bufferId,
-                            durationInSeconds:
-                                buffer.length / buffer.sampleRate,
-                        });
-                    },
-                    function (error) {
-                        app.ports.audioPortFromJS.send({
-                            type: 0,
-                            requestId: requestId,
-                            error: error.message,
-                        });
-                    }
-                );
-            };
-            request.send();
+                let bufferId = audioBuffers.length;
+                audioBuffers.push(buffer);
+
+                app.ports.audioPortFromJS.send({
+                    type: 1,
+                    requestId: audio.requestId,
+                    bufferId: bufferId,
+                    durationInSeconds: buffer.length / buffer.sampleRate,
+                });
+            } catch (error) {
+                app.ports.audioPortFromJS.send({
+                    type: 0,
+                    requestId: audio.requestId,
+                    error: error.message,
+                });
+            }
         }
 
         function posixToContextTime(posix, currentTimePosix) {
@@ -207,7 +199,7 @@ function startAudio(app) {
             };
         }
 
-        app.ports.audioPortToJS.subscribe((message) => {
+        app.ports.audioPortToJS.subscribe(async (message) => {
             let currentTime = new Date().getTime();
             for (let i = 0; i < message.audio.length; i++) {
                 let audio = message.audio[i];
@@ -291,12 +283,8 @@ function startAudio(app) {
                 }
             }
 
-            for (let i = 0; i < message.audioCmds.length; i++) {
-                loadAudio(
-                    message.audioCmds[i].audioUrl,
-                    message.audioCmds[i].requestId
-                );
-            }
+            const loads = message.audioCmds.map(loadAudio);
+            await Promise.all(loads);
         });
     } else {
         console.log("Web audio is not supported in your browser.");
