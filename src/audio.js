@@ -5,14 +5,6 @@ function startAudio(app) {
         let audioBuffers = [];
         let context = new AudioContext();
         let audioPlaying = {};
-        /* https://lame.sourceforge.io/tech-FAQ.txt
-         * "All *decoders* I have tested introduce a delay of 528 samples. That
-         * is, after decoding an mp3 file, the output will have 528 samples of
-         * 0's appended to the front."
-         *
-         * Edit: Actually it seems like browsers already account for this lets set this to 0 instead.
-         */
-        let mp3MarginInSamples = 0;
 
         app.ports.audioPortFromJS.send({
             type: 2,
@@ -39,20 +31,14 @@ function startAudio(app) {
                     request.response,
                     function (buffer) {
                         let bufferId = audioBuffers.length;
-
-                        let isMp3 = audioUrl.endsWith(".mp3");
-                        // TODO: Read the header of the ArrayBuffer before decoding to an AudioBuffer https://www.mp3-tech.org/programmer/frame_header.html
-                        // need to use DataViews to read from the ArrayBuffer
-                        audioBuffers.push({ isMp3: isMp3, buffer: buffer });
+                        audioBuffers.push(buffer);
 
                         app.ports.audioPortFromJS.send({
                             type: 1,
                             requestId: requestId,
                             bufferId: bufferId,
                             durationInSeconds:
-                                (buffer.length -
-                                    (isMp3 ? mp3MarginInSamples : 0)) /
-                                buffer.sampleRate,
+                                buffer.length / buffer.sampleRate,
                         });
                     },
                     function (error) {
@@ -71,11 +57,10 @@ function startAudio(app) {
             return (posix - currentTimePosix) / 1000 + context.currentTime;
         }
 
-        function setLoop(sourceNode, loop, mp3MarginInSeconds) {
+        function setLoop(sourceNode, loop) {
             if (loop) {
-                sourceNode.loopStart =
-                    mp3MarginInSeconds + loop.loopStart / 1000;
-                sourceNode.loopEnd = mp3MarginInSeconds + loop.loopEnd / 1000;
+                sourceNode.loopStart = loop.loopStart / 1000;
+                sourceNode.loopEnd = loop.loopEnd / 1000;
                 sourceNode.loop = true;
             } else {
                 sourceNode.loop = false;
@@ -148,7 +133,7 @@ function startAudio(app) {
         }
 
         function playSound(
-            audioBuffer,
+            buffer,
             volume,
             volumeTimelines,
             startTime,
@@ -157,10 +142,6 @@ function startAudio(app) {
             loop,
             playbackRate
         ) {
-            let buffer = audioBuffer.buffer;
-            let mp3MarginInSeconds = audioBuffer.isMp3
-                ? mp3MarginInSamples / context.sampleRate
-                : 0;
             let source = context.createBufferSource();
 
             if (loop) {
@@ -191,7 +172,7 @@ function startAudio(app) {
             }
 
             source.playbackRate.value = playbackRate;
-            setLoop(source, loop, mp3MarginInSeconds);
+            setLoop(source, loop);
 
             let timelineGainNodes = createVolumeTimelineGainNodes(
                 volumeTimelines,
@@ -211,12 +192,12 @@ function startAudio(app) {
             if (startTime >= currentTime) {
                 source.start(
                     posixToContextTime(startTime, currentTime),
-                    mp3MarginInSeconds + startAt / 1000
+                    startAt / 1000
                 );
             } else {
                 // TODO: offset should account for looping
                 let offset = (currentTime - startTime) / 1000;
-                source.start(0, offset + mp3MarginInSeconds + startAt / 1000);
+                source.start(0, offset + startAt / 1000);
             }
 
             return {
@@ -273,21 +254,13 @@ function startAudio(app) {
                     }
                     case "setLoopConfig": {
                         let value = audioPlaying[audio.nodeGroupId];
-                        let audioBuffer = audioBuffers[value.bufferId];
-                        let mp3MarginInSeconds = audioBuffer.isMp3
-                            ? mp3MarginInSamples / context.sampleRate
-                            : 0;
 
                         /* TODO: Resizing the buffer if the loopEnd value is past the end of the buffer.
                            This might not be possible to do so the alternative is to create a new audio
                            node (this will probably cause a popping sound and audio that is slightly out of sync).
                          */
 
-                        setLoop(
-                            value.nodes.sourceNode,
-                            audio.loop,
-                            mp3MarginInSeconds
-                        );
+                        setLoop(value.nodes.sourceNode, audio.loop);
                         break;
                     }
                     case "setPlaybackRate": {
