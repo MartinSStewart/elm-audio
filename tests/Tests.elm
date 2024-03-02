@@ -1,12 +1,11 @@
-module Tests exposing (..)
+module Tests exposing (suite)
 
 import Audio exposing (BufferId(..))
 import Dict
 import Duration
-import Expect exposing (Expectation)
-import Fuzz exposing (Fuzzer, int, list, string)
+import Expect
 import Json.Encode
-import Test exposing (..)
+import Test exposing (Test, test)
 import Time
 
 

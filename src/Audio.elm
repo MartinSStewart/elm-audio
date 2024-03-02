@@ -1,5 +1,5 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt, offsetBy
@@ -13,7 +13,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
 
 
 # Load audio
@@ -173,7 +173,9 @@ mapAudioLoadRequest mapFunc audioLoadRequest =
 {-| Ports that allows this package to communicate with the JS portion of the package.
 -}
 type alias Ports msg =
-    { toJS : JE.Value -> Cmd (Msg msg), fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg) }
+    { toJS : JE.Value -> Cmd (Msg msg)
+    , fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg)
+    }
 
 
 getUserModel : Model userMsg userModel -> userModel
@@ -458,9 +460,6 @@ removeAt index l =
 
     else
         let
-            head =
-                List.take index l
-
             tail =
                 List.drop index l |> List.tail
         in
@@ -469,6 +468,10 @@ removeAt index l =
                 l
 
             Just t ->
+                let
+                    head =
+                        List.take index l
+                in
                 List.append head t
 
 
@@ -568,7 +571,7 @@ update app msg (Model model) =
                 InitAudioContext { samplesPerSecond } ->
                     ( Model { model | samplesPerSecond = Just samplesPerSecond }, Cmd.none )
 
-                JsonParseError { error } ->
+                JsonParseError _ ->
                     ( Model model, Cmd.none )
 
 
@@ -583,20 +586,20 @@ subscriptions app (Model model) =
 decodeLoadError : JD.Decoder LoadError
 decodeLoadError =
     JD.string
-        |> JD.andThen
+        |> JD.map
             (\value ->
                 case value of
                     "NetworkError" ->
-                        JD.succeed NetworkError
+                        NetworkError
 
                     "MediaDecodeAudioDataUnknownContentType" ->
-                        JD.succeed FailedToDecode
+                        FailedToDecode
 
                     "DOMException: The buffer passed to decodeAudioData contains an unknown content type." ->
-                        JD.succeed FailedToDecode
+                        FailedToDecode
 
                     _ ->
-                        JD.succeed UnknownError
+                        UnknownError
             )
 
 
@@ -860,7 +863,7 @@ flattenAudioCmd audioCmd =
             [ data ]
 
         AudioCmdGroup list ->
-            List.map flattenAudioCmd list |> List.concat
+            List.concatMap flattenAudioCmd list
 
 
 encodeAudioCmd : Model userMsg userModel -> AudioCmd userMsg -> ( Model userMsg userModel, JE.Value )
@@ -909,7 +912,7 @@ flattenAudio : Audio -> List FlattenedAudio
 flattenAudio audio_ =
     case audio_ of
         Group group_ ->
-            group_ |> List.map flattenAudio |> List.concat
+            List.concatMap flattenAudio group_
 
         BasicAudio { source, startTime, settings } ->
             [ { source = source
