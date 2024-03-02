@@ -1,5 +1,5 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt, offsetBy
@@ -13,7 +13,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
 
 
 # Load audio
@@ -173,7 +173,9 @@ mapAudioLoadRequest mapFunc audioLoadRequest =
 {-| Ports that allows this package to communicate with the JS portion of the package.
 -}
 type alias Ports msg =
-    { toJS : JE.Value -> Cmd (Msg msg), fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg) }
+    { toJS : JE.Value -> Cmd (Msg msg)
+    , fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg)
+    }
 
 
 getUserModel : Model userMsg userModel -> userModel
@@ -316,6 +318,9 @@ lamderaFrontendWithAudio =
            )
 
 
+withAudioOffset :
+    { a | audio : AudioData -> model -> Audio }
+    -> { a | audio : AudioData -> model -> Audio }
 withAudioOffset app =
     { app | audio = \audioData_ model -> app.audio audioData_ model |> offsetBy (Duration.milliseconds 50) }
 
@@ -365,6 +370,7 @@ updateHelper :
     -> ( Model userMsg userModel, Cmd (Msg userMsg) )
 updateHelper audioPort audioFunc userUpdate (Model model) =
     let
+        audioData_ : AudioData
         audioData_ =
             audioData (Model model)
 
@@ -386,6 +392,7 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
         ( newModel2, audioRequests ) =
             audioCmds |> encodeAudioCmd newModel
 
+        portMessage : JE.Value
         portMessage =
             JE.object
                 [ ( "audio", JE.list identity json )
@@ -407,6 +414,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
         ( audioState, newNodeGroupIdCounter, json ) =
             diffAudioState 0 Dict.empty (audioFunc (AudioData { sourceData = Dict.empty }) model)
 
+        initialModel : Model userMsg model
         initialModel =
             Model
                 { audioState = audioState
@@ -457,18 +465,16 @@ removeAt index l =
         l
 
     else
-        let
-            head =
-                List.take index l
-
-            tail =
-                List.drop index l |> List.tail
-        in
-        case tail of
-            Nothing ->
+        case List.drop index l of
+            [] ->
                 l
 
-            Just t ->
+            _ :: t ->
+                let
+                    head : List a
+                    head =
+                        List.take index l
+                in
                 List.append head t
 
 
@@ -497,12 +503,15 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
+                                source : Result error Source
                                 source =
                                     { bufferId = bufferId } |> File |> Ok
 
+                                maybeUserMsg : Maybe ( Result LoadError Source, userMsg )
                                 maybeUserMsg =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) source)
 
+                                sourceData : Dict Int { duration : Duration }
                                 sourceData =
                                     Dict.insert (rawBufferId bufferId) { duration = duration } model.sourceData
                             in
@@ -539,9 +548,11 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
+                                a : Result LoadError value
                                 a =
                                     Err error
 
+                                b : Maybe ( Result LoadError Source, userMsg )
                                 b =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
                             in
@@ -568,7 +579,7 @@ update app msg (Model model) =
                 InitAudioContext { samplesPerSecond } ->
                     ( Model { model | samplesPerSecond = Just samplesPerSecond }, Cmd.none )
 
-                JsonParseError { error } ->
+                JsonParseError _ ->
                     ( Model model, Cmd.none )
 
 
@@ -583,20 +594,20 @@ subscriptions app (Model model) =
 decodeLoadError : JD.Decoder LoadError
 decodeLoadError =
     JD.string
-        |> JD.andThen
+        |> JD.map
             (\value ->
                 case value of
                     "NetworkError" ->
-                        JD.succeed NetworkError
+                        NetworkError
 
                     "MediaDecodeAudioDataUnknownContentType" ->
-                        JD.succeed FailedToDecode
+                        FailedToDecode
 
                     "DOMException: The buffer passed to decodeAudioData contains an unknown content type." ->
-                        JD.succeed FailedToDecode
+                        FailedToDecode
 
                     _ ->
-                        JD.succeed UnknownError
+                        UnknownError
             )
 
 
@@ -688,6 +699,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
             case validAudio of
                 ( index, a ) :: _ ->
                     let
+                        encodeValue : (FlattenedAudio -> a) -> (NodeGroupId -> a -> b) -> Maybe b
                         encodeValue getter encoder =
                             if getter audioGroup == getter a then
                                 Nothing
@@ -695,6 +707,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                             else
                                 encoder nodeGroupId (getter a) |> Just
 
+                        effects : List JE.Value
                         effects =
                             [ encodeValue .volume encodeSetVolume
                             , encodeValue .loop encodeSetLoopConfig
@@ -860,7 +873,7 @@ flattenAudioCmd audioCmd =
             [ data ]
 
         AudioCmdGroup list ->
-            List.map flattenAudioCmd list |> List.concat
+            List.concatMap flattenAudioCmd list
 
 
 encodeAudioCmd : Model userMsg userModel -> AudioCmd userMsg -> ( Model userMsg userModel, JE.Value )
@@ -909,7 +922,7 @@ flattenAudio : Audio -> List FlattenedAudio
 flattenAudio audio_ =
     case audio_ of
         Group group_ ->
-            group_ |> List.map flattenAudio |> List.concat
+            List.concatMap flattenAudio group_
 
         BasicAudio { source, startTime, settings } ->
             [ { source = source
@@ -963,6 +976,7 @@ type Source
     = File { bufferId : BufferId }
 
 
+audioSourceBufferId : Source -> BufferId
 audioSourceBufferId (File audioSource) =
     audioSource.bufferId
 

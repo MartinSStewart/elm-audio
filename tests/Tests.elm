@@ -1,12 +1,11 @@
-module Tests exposing (..)
+module Tests exposing (suite)
 
-import Audio exposing (BufferId(..))
+import Audio exposing (Audio, BufferId(..))
 import Dict
 import Duration
-import Expect exposing (Expectation)
-import Fuzz exposing (Fuzzer, int, list, string)
+import Expect
 import Json.Encode
-import Test exposing (..)
+import Test exposing (Test, test)
 import Time
 
 
@@ -17,12 +16,15 @@ suite =
     test "Update loop correctly" <|
         \_ ->
             let
+                startTime : Time.Posix
                 startTime =
                     Time.millisToPosix 100000
 
+                oldAudio : Audio
                 oldAudio =
                     Audio.audio (Audio.File { bufferId = BufferId 1 }) startTime
 
+                newAudio : Audio
                 newAudio =
                     Audio.audioWithConfig
                         { loop = Just { loopStart = Duration.seconds 0, loopEnd = Duration.seconds 10 }
@@ -38,6 +40,7 @@ suite =
                 ( newDiff, _, json ) =
                     Audio.diffAudioState nodeGroupCounter startDiff newAudio
 
+                jsonText : List String
                 jsonText =
                     List.map (Json.Encode.encode 0) json
             in
