@@ -22,6 +22,7 @@ function startAudio(app) {
                     requestId: audio.requestId,
                     error: "NetworkError",
                 });
+                return;
             }
 
             try {
