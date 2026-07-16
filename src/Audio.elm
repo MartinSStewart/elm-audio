@@ -1,9 +1,10 @@
 module Audio exposing
-    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
+    ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
     , scaleVolume, scaleVolumeAt, offsetBy
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
+    , FlattenedAudio, diffAudioState, flattenAudio, sourceWithBufferId
     )
 
 {-|
@@ -13,7 +14,7 @@ module Audio exposing
 
 Create an Elm app that supports playing audio.
 
-@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
+@docs elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData
 
 
 # Load audio
@@ -77,6 +78,12 @@ type alias Model_ userMsg userModel =
     , pendingRequests : Dict Int (AudioLoadRequest_ userMsg)
     , samplesPerSecond : Maybe Int
     , sourceData : Dict Int SourceData
+
+    -- The audio value that produced the current audioState. Keeping it lets us
+    -- skip diffing entirely when the audio function returns the same thing it
+    -- did last time (the common case when only unrelated model fields change,
+    -- e.g. an animation-frame clock driving the view).
+    , lastAudio : Audio
     }
 
 
@@ -173,9 +180,7 @@ mapAudioLoadRequest mapFunc audioLoadRequest =
 {-| Ports that allows this package to communicate with the JS portion of the package.
 -}
 type alias Ports msg =
-    { toJS : JE.Value -> Cmd (Msg msg)
-    , fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg)
-    }
+    { toJS : JE.Value -> Cmd (Msg msg), fromJS : (JD.Value -> Msg msg) -> Sub (Msg msg) }
 
 
 getUserModel : Model userMsg userModel -> userModel
@@ -318,9 +323,6 @@ lamderaFrontendWithAudio =
            )
 
 
-withAudioOffset :
-    { a | audio : AudioData -> model -> Audio }
-    -> { a | audio : AudioData -> model -> Audio }
 withAudioOffset app =
     { app | audio = \audioData_ model -> app.audio audioData_ model |> offsetBy (Duration.milliseconds 50) }
 
@@ -345,6 +347,7 @@ migrateModel msgMigrate modelMigrate (Model model) =
         , pendingRequests = Dict.map (\_ value -> mapAudioLoadRequest msgMigrate value) model.pendingRequests
         , requestCount = model.requestCount
         , sourceData = model.sourceData
+        , lastAudio = model.lastAudio
         }
     , cmd
     )
@@ -370,15 +373,24 @@ updateHelper :
     -> ( Model userMsg userModel, Cmd (Msg userMsg) )
 updateHelper audioPort audioFunc userUpdate (Model model) =
     let
-        audioData_ : AudioData
         audioData_ =
             audioData (Model model)
 
         ( newUserModel, userCmd, audioCmds ) =
             userUpdate audioData_ model.userModel
 
+        newAudio =
+            audioFunc audioData_ newUserModel
+
         ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState model.nodeGroupIdCounter model.audioState (audioFunc audioData_ newUserModel)
+            if newAudio == model.lastAudio then
+                -- Nothing about the audio changed, so there is nothing to diff
+                -- and no messages to send. This is what keeps frequent updates
+                -- (like a 60fps clock) from doing O(sounds) work every frame.
+                ( model.audioState, model.nodeGroupIdCounter, [] )
+
+            else
+                diffAudioState model.nodeGroupIdCounter model.audioState newAudio
 
         newModel : Model userMsg userModel
         newModel =
@@ -387,12 +399,12 @@ updateHelper audioPort audioFunc userUpdate (Model model) =
                     | audioState = audioState
                     , nodeGroupIdCounter = newNodeGroupIdCounter
                     , userModel = newUserModel
+                    , lastAudio = newAudio
                 }
 
         ( newModel2, audioRequests ) =
             audioCmds |> encodeAudioCmd newModel
 
-        portMessage : JE.Value
         portMessage =
             JE.object
                 [ ( "audio", JE.list identity json )
@@ -411,10 +423,12 @@ initHelper :
     -> ( Model userMsg model, Cmd (Msg userMsg) )
 initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
     let
-        ( audioState, newNodeGroupIdCounter, json ) =
-            diffAudioState 0 Dict.empty (audioFunc (AudioData { sourceData = Dict.empty }) model)
+        initialAudio =
+            audioFunc (AudioData { sourceData = Dict.empty }) model
 
-        initialModel : Model userMsg model
+        ( audioState, newNodeGroupIdCounter, json ) =
+            diffAudioState 0 Dict.empty initialAudio
+
         initialModel =
             Model
                 { audioState = audioState
@@ -424,6 +438,7 @@ initHelper audioPort audioFunc ( model, cmds, audioCmds ) =
                 , pendingRequests = Dict.empty
                 , samplesPerSecond = Nothing
                 , sourceData = Dict.empty
+                , lastAudio = initialAudio
                 }
 
         ( initialModel2, audioRequests ) =
@@ -457,27 +472,6 @@ find predicate list =
                 find predicate rest
 
 
-{-| Borrowed from List.Extra so we don't need to depend on the entire package.
--}
-removeAt : Int -> List a -> List a
-removeAt index l =
-    if index < 0 then
-        l
-
-    else
-        case List.drop index l of
-            [] ->
-                l
-
-            _ :: t ->
-                let
-                    head : List a
-                    head =
-                        List.take index l
-                in
-                List.append head t
-
-
 flip : (c -> b -> a) -> b -> c -> a
 flip func a b =
     func b a
@@ -503,15 +497,12 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
-                                source : Result error Source
                                 source =
                                     { bufferId = bufferId } |> File |> Ok
 
-                                maybeUserMsg : Maybe ( Result LoadError Source, userMsg )
                                 maybeUserMsg =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) source)
 
-                                sourceData : Dict Int { duration : Duration }
                                 sourceData =
                                     Dict.insert (rawBufferId bufferId) { duration = duration } model.sourceData
                             in
@@ -548,11 +539,9 @@ update app msg (Model model) =
                     case Dict.get requestId model.pendingRequests of
                         Just pendingRequest ->
                             let
-                                a : Result LoadError value
                                 a =
                                     Err error
 
-                                b : Maybe ( Result LoadError Source, userMsg )
                                 b =
                                     Nonempty.toList pendingRequest.userMsg |> find (Tuple.first >> (==) a)
                             in
@@ -579,7 +568,7 @@ update app msg (Model model) =
                 InitAudioContext { samplesPerSecond } ->
                     ( Model { model | samplesPerSecond = Just samplesPerSecond }, Cmd.none )
 
-                JsonParseError _ ->
+                JsonParseError { error } ->
                     ( Model model, Cmd.none )
 
 
@@ -594,20 +583,20 @@ subscriptions app (Model model) =
 decodeLoadError : JD.Decoder LoadError
 decodeLoadError =
     JD.string
-        |> JD.map
+        |> JD.andThen
             (\value ->
                 case value of
                     "NetworkError" ->
-                        NetworkError
+                        JD.succeed NetworkError
 
                     "MediaDecodeAudioDataUnknownContentType" ->
-                        FailedToDecode
+                        JD.succeed FailedToDecode
 
                     "DOMException: The buffer passed to decodeAudioData contains an unknown content type." ->
-                        FailedToDecode
+                        JD.succeed FailedToDecode
 
                     _ ->
-                        UnknownError
+                        JD.succeed UnknownError
             )
 
 
@@ -673,83 +662,178 @@ decodeBufferId =
     JD.int |> JD.map BufferId
 
 
-updateAudioState :
-    ( NodeGroupId, FlattenedAudio )
-    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
-    -> ( List FlattenedAudio, Dict NodeGroupId FlattenedAudio, List JE.Value )
-updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json ) =
-    let
-        validAudio : List ( Int, FlattenedAudio )
-        validAudio =
-            flattenedAudio
-                |> List.indexedMap Tuple.pair
-                |> List.filter
-                    (\( _, a ) ->
-                        (a.source == audioGroup.source)
-                            && (audioStartTime a == audioStartTime audioGroup)
-                            && (a.startAt == audioGroup.startAt)
-                    )
-    in
-    case find (\( _, a ) -> a == audioGroup) validAudio of
-        Just ( index, _ ) ->
-            -- We found a perfect match so nothing needs to change.
-            ( removeAt index flattenedAudio, audioState, json )
+{-| The identity of a playing sound: it comes from the same buffer, starts at
+the same wall-clock time (offset included), and starts from the same point
+within the buffer. Two sounds that share a key are "the same sound" whose
+remaining settings (volume, loop, playback rate, volume timeline) might still
+differ and need updating.
 
-        Nothing ->
-            case validAudio of
-                ( index, a ) :: _ ->
-                    let
-                        encodeValue : (FlattenedAudio -> a) -> (NodeGroupId -> a -> b) -> Maybe b
-                        encodeValue getter encoder =
-                            if getter audioGroup == getter a then
-                                Nothing
+Computing this once per sound and grouping by it is what lets the diff avoid
+re-scanning the whole new-audio list for every currently playing sound.
 
-                            else
-                                encoder nodeGroupId (getter a) |> Just
-
-                        effects : List JE.Value
-                        effects =
-                            [ encodeValue .volume encodeSetVolume
-                            , encodeValue .loop encodeSetLoopConfig
-                            , encodeValue .playbackRate encodeSetPlaybackRate
-                            , encodeValue volumeTimelines encodeSetVolumeAt
-                            ]
-                                |> List.filterMap identity
-                    in
-                    -- We found audio that has the same bufferId and startTime but some other settings have changed.
-                    ( removeAt index flattenedAudio
-                    , Dict.insert nodeGroupId a audioState
-                    , effects ++ json
-                    )
-
-                [] ->
-                    -- We didn't find any audio with the same bufferId and startTime so we'll stop this sound.
-                    ( flattenedAudio
-                    , Dict.remove nodeGroupId audioState
-                    , encodeStopSound nodeGroupId :: json
-                    )
+-}
+type alias AudioKey =
+    ( Int, Int, Float )
 
 
+audioKey : FlattenedAudio -> AudioKey
+audioKey a =
+    ( audioSourceBufferId a.source |> rawBufferId
+    , audioStartTime a |> Time.posixToMillis
+    , a.startAt |> Duration.inMilliseconds
+    )
+
+
+{-| Figure out the minimal set of changes needed to turn the currently playing
+audio (`audioState`) into `newAudio`, returning the updated state, the next
+free node-group id, and the port messages describing the changes.
+
+The new audio is bucketed by [`audioKey`](#audioKey) so each existing sound is
+reconciled with a dictionary lookup rather than a linear scan of every new
+sound. That makes the whole diff roughly `O((n + m) * log n)` instead of
+`O(n * m)`, and — crucially — when little or nothing has changed almost every
+existing sound finds an exact match and contributes no work and no messages.
+
+-}
 diffAudioState : Int -> Dict NodeGroupId FlattenedAudio -> Audio -> ( Dict NodeGroupId FlattenedAudio, Int, List JE.Value )
 diffAudioState nodeGroupIdCounter audioState newAudio =
     let
-        ( newAudioLeft, newAudioState, json2 ) =
-            Dict.toList audioState
-                |> List.foldl updateAudioState
-                    ( flattenAudio newAudio, audioState, [] )
+        -- Group the new audio by identity. Buckets are never stored empty, and
+        -- keep their sounds in the original flattened order so that ties are
+        -- broken the same way regardless of how many sounds share a key.
+        buckets : Dict AudioKey (List FlattenedAudio)
+        buckets =
+            List.foldr
+                (\a acc ->
+                    Dict.update (audioKey a)
+                        (\existing -> Just (a :: Maybe.withDefault [] existing))
+                        acc
+                )
+                Dict.empty
+                (flattenAudio newAudio)
 
-        ( newNodeGroupIdCounter, newAudioState2, json3 ) =
-            newAudioLeft
-                |> List.foldl
-                    (\audioLeft ( counter, audioState_, json_ ) ->
-                        ( counter + 1
-                        , Dict.insert counter audioLeft audioState_
-                        , encodeStartSound counter audioLeft :: json_
-                        )
-                    )
-                    ( nodeGroupIdCounter, newAudioState, json2 )
+        -- Reconcile every currently playing sound: leave exact matches alone,
+        -- update sounds whose settings changed, and stop sounds that are gone.
+        ( remainingBuckets, keptState, updateJson ) =
+            Dict.foldl reconcileExistingAudio ( buckets, Dict.empty, [] ) audioState
+
+        -- Any new sounds still left in the buckets had no counterpart, so they
+        -- get started with fresh node-group ids.
+        ( newNodeGroupIdCounter, newAudioState, json ) =
+            Dict.foldl
+                (\_ bucket acc -> List.foldl startNewAudio acc bucket)
+                ( nodeGroupIdCounter, keptState, updateJson )
+                remainingBuckets
     in
-    ( newAudioState2, newNodeGroupIdCounter, json3 )
+    ( newAudioState, newNodeGroupIdCounter, json )
+
+
+reconcileExistingAudio :
+    NodeGroupId
+    -> FlattenedAudio
+    -> ( Dict AudioKey (List FlattenedAudio), Dict NodeGroupId FlattenedAudio, List JE.Value )
+    -> ( Dict AudioKey (List FlattenedAudio), Dict NodeGroupId FlattenedAudio, List JE.Value )
+reconcileExistingAudio nodeGroupId existing ( buckets, audioState, json ) =
+    let
+        key =
+            audioKey existing
+    in
+    case Dict.get key buckets |> Maybe.andThen (extractMatch existing) of
+        Just ( match, isExactMatch, rest ) ->
+            let
+                newBuckets =
+                    if List.isEmpty rest then
+                        Dict.remove key buckets
+
+                    else
+                        Dict.insert key rest buckets
+
+                effects =
+                    if isExactMatch then
+                        -- Same buffer, same time, same settings: nothing to do.
+                        []
+
+                    else
+                        changedSettings nodeGroupId existing match
+            in
+            ( newBuckets, Dict.insert nodeGroupId match audioState, effects ++ json )
+
+        Nothing ->
+            -- No new sound shares this sound's identity, so stop it.
+            ( buckets, audioState, encodeStopSound nodeGroupId :: json )
+
+
+{-| Pull the best match for `existing` out of a (non-empty) bucket: an exact
+match if one is present (`isExactMatch = True`), otherwise the first sound in
+the bucket. Returns the match, whether it was exact, and the rest of the bucket.
+-}
+extractMatch : FlattenedAudio -> List FlattenedAudio -> Maybe ( FlattenedAudio, Bool, List FlattenedAudio )
+extractMatch existing bucket =
+    case removeFirstEqual existing bucket of
+        Just rest ->
+            Just ( existing, True, rest )
+
+        Nothing ->
+            case bucket of
+                first :: rest ->
+                    Just ( first, False, rest )
+
+                [] ->
+                    Nothing
+
+
+{-| The port messages needed to update an already-playing sound whose settings
+changed. Only fields that actually differ produce a message.
+-}
+changedSettings : NodeGroupId -> FlattenedAudio -> FlattenedAudio -> List JE.Value
+changedSettings nodeGroupId existing new =
+    let
+        changed getter encoder =
+            if getter existing == getter new then
+                Nothing
+
+            else
+                encoder nodeGroupId (getter new) |> Just
+    in
+    [ changed .volume encodeSetVolume
+    , changed .loop encodeSetLoopConfig
+    , changed .playbackRate encodeSetPlaybackRate
+    , changed volumeTimelines encodeSetVolumeAt
+    ]
+        |> List.filterMap identity
+
+
+startNewAudio :
+    FlattenedAudio
+    -> ( Int, Dict NodeGroupId FlattenedAudio, List JE.Value )
+    -> ( Int, Dict NodeGroupId FlattenedAudio, List JE.Value )
+startNewAudio audioLeft ( counter, audioState, json ) =
+    ( counter + 1
+    , Dict.insert counter audioLeft audioState
+    , encodeStartSound counter audioLeft :: json
+    )
+
+
+{-| Remove the first element structurally equal to `target`, returning the list
+without it (order preserved). `Nothing` when no element matches.
+-}
+removeFirstEqual : a -> List a -> Maybe (List a)
+removeFirstEqual target list =
+    removeFirstEqualHelp target [] list
+
+
+removeFirstEqualHelp : a -> List a -> List a -> Maybe (List a)
+removeFirstEqualHelp target skipped list =
+    case list of
+        [] ->
+            Nothing
+
+        x :: xs ->
+            if x == target then
+                Just (List.reverse skipped ++ xs)
+
+            else
+                removeFirstEqualHelp target (x :: skipped) xs
 
 
 encodeStartSound : NodeGroupId -> FlattenedAudio -> JE.Value
@@ -873,7 +957,7 @@ flattenAudioCmd audioCmd =
             [ data ]
 
         AudioCmdGroup list ->
-            List.concatMap flattenAudioCmd list
+            List.map flattenAudioCmd list |> List.concat
 
 
 encodeAudioCmd : Model userMsg userModel -> AudioCmd userMsg -> ( Model userMsg userModel, JE.Value )
@@ -922,7 +1006,7 @@ flattenAudio : Audio -> List FlattenedAudio
 flattenAudio audio_ =
     case audio_ of
         Group group_ ->
-            List.concatMap flattenAudio group_
+            group_ |> List.map flattenAudio |> List.concat
 
         BasicAudio { source, startTime, settings } ->
             [ { source = source
@@ -976,9 +1060,20 @@ type Source
     = File { bufferId : BufferId }
 
 
-audioSourceBufferId : Source -> BufferId
 audioSourceBufferId (File audioSource) =
     audioSource.bufferId
+
+
+{-| Build a [`Source`](#Source) that refers to a given buffer id directly.
+
+Normally a `Source` only comes from [`loadAudio`](#loadAudio), but the diffing
+logic keys off nothing but the buffer id, so this exists so tests can construct
+`Audio` values without loading real files. Not intended for application use.
+
+-}
+sourceWithBufferId : Int -> Source
+sourceWithBufferId bufferId =
+    File { bufferId = BufferId bufferId }
 
 
 {-| Extra settings when playing audio from a file.
