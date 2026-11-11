@@ -20,3 +20,6 @@
 
 ## 4.0.3
 * Fix loop bug in audio.js (make sure to update copy over the new audio.js code!)
+
+## 4.1.0
+* Added `pan`, which moves audio towards the left or the right speaker. Make sure to copy over the new audio.js code! The new audio.js still works with older versions of elm-audio, where it plays every sound centered.

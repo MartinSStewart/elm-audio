@@ -2,7 +2,7 @@ module Audio exposing
     ( elementWithAudio, documentWithAudio, applicationWithAudio, Model, Msg, AudioData, Ports
     , AudioCmd, loadAudio, LoadError(..), Source, cmdMap, cmdBatch, cmdNone
     , Audio, audio, group, silence, length, audioWithConfig, audioDefaultConfig, PlayAudioConfig, LoopConfig
-    , scaleVolume, scaleVolumeAt, offsetBy
+    , scaleVolume, scaleVolumeAt, offsetBy, pan
     , lamderaFrontendWithAudio, migrateModel, migrateMsg
     )
 
@@ -34,7 +34,7 @@ Define what audio should be playing.
 
 Effects you can apply to `Audio`.
 
-@docs scaleVolume, scaleVolumeAt, offsetBy
+@docs scaleVolume, scaleVolumeAt, offsetBy, pan
 
 
 # Lamdera stuff
@@ -713,6 +713,7 @@ updateAudioState ( nodeGroupId, audioGroup ) ( flattenedAudio, audioState, json 
                             , encodeValue .loop encodeSetLoopConfig
                             , encodeValue .playbackRate encodeSetPlaybackRate
                             , encodeValue volumeTimelines encodeSetVolumeAt
+                            , encodeValue clampedPan encodeSetPan
                             ]
                                 |> List.filterMap identity
                     in
@@ -764,12 +765,21 @@ encodeStartSound nodeGroupId audio_ =
         , ( "volumeTimelines", JE.list encodeVolumeTimeline (volumeTimelines audio_) )
         , ( "loop", encodeLoopConfig audio_.loop )
         , ( "playbackRate", JE.float audio_.playbackRate )
+        , ( "pan", JE.float (clampedPan audio_) )
         ]
 
 
 audioStartTime : FlattenedAudio -> Time.Posix
 audioStartTime audio_ =
     Duration.addTo audio_.startTime audio_.offset
+
+
+{-| Nested pans add up, so the sum can go past -1 or 1: clamp it only here, once,
+so the result doesn't depend on how the effects are nested.
+-}
+clampedPan : FlattenedAudio -> Float
+clampedPan audio_ =
+    clamp -1 1 audio_.pan
 
 
 volumeTimelines : FlattenedAudio -> List VolumeTimeline
@@ -821,6 +831,15 @@ encodeSetPlaybackRate nodeGroupId playbackRate =
         [ ( "nodeGroupId", JE.int nodeGroupId )
         , ( "action", JE.string "setPlaybackRate" )
         , ( "playbackRate", JE.float playbackRate )
+        ]
+
+
+encodeSetPan : NodeGroupId -> Float -> JE.Value
+encodeSetPan nodeGroupId pan_ =
+    JE.object
+        [ ( "nodeGroupId", JE.int nodeGroupId )
+        , ( "action", JE.string "setPan" )
+        , ( "pan", JE.float pan_ )
         ]
 
 
@@ -915,6 +934,7 @@ type alias FlattenedAudio =
     , volumeTimelines : List (Nonempty ( Time.Posix, Float ))
     , loop : Maybe LoopConfig
     , playbackRate : Float
+    , pan : Float
     }
 
 
@@ -933,6 +953,7 @@ flattenAudio audio_ =
               , volumeTimelines = []
               , loop = settings.loop
               , playbackRate = settings.playbackRate
+              , pan = 0
               }
             ]
 
@@ -953,6 +974,11 @@ flattenAudio audio_ =
                         (\a -> { a | offset = Quantity.plus duration a.offset })
                         (flattenAudio effect.audio)
 
+                Pan { panBy } ->
+                    List.map
+                        (\a -> { a | pan = panBy + a.pan })
+                        (flattenAudio effect.audio)
+
 
 {-| Some kind of sound we want to play. To create `Audio` start with `audio`.
 -}
@@ -968,6 +994,7 @@ type EffectType
     = ScaleVolume { scaleBy : Float }
     | ScaleVolumeAt { volumeAt : Nonempty ( Time.Posix, Float ) }
     | Offset Duration
+    | Pan { panBy : Float }
 
 
 {-| Audio data we can use to play sounds
@@ -1114,6 +1141,27 @@ offsetBy : Duration -> Audio -> Audio
 offsetBy offset_ audio_ =
     Effect
         { effectType = Offset offset_
+        , audio = audio_
+        }
+
+
+{-| Move audio towards the left or the right speaker.
+-1 is fully left, 0 is centered (the default), and 1 is fully right.
+Nested pans add up, and the sum is clamped between -1 and 1.
+
+    import Audio
+
+
+    -- A footstep that follows a character across the screen
+    footstep characterX screenWidth source startTime =
+        Audio.audio source startTime
+            |> Audio.pan ((characterX - screenWidth / 2) / (screenWidth / 2))
+
+-}
+pan : Float -> Audio -> Audio
+pan panBy audio_ =
+    Effect
+        { effectType = Pan { panBy = panBy }
         , audio = audio_
         }
 
