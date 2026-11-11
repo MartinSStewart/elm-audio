@@ -8,7 +8,7 @@ function startAudio(app) {
         /** @type {AudioBuffer[]} */
         let audioBuffers = [];
         let context = new AudioContext();
-        /** @type {{ [key: number]: { bufferId: any; nodes: {sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] } } }} */
+        /** @type {{ [key: number]: { bufferId: any; nodes: {sourceNode: AudioBufferSourceNode; gainNode: GainNode; pannerNode: StereoPannerNode; volumeAtGainNodes: GainNode[] } } }} */
         let audioPlaying = {};
 
         app.ports.audioPortFromJS.send({
@@ -164,7 +164,8 @@ function startAudio(app) {
          * @param {number} currentTime
          * @param {{ loopEnd: number; loopStart: number; } | null} loop
          * @param {number} playbackRate
-         * @returns {{ sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] }}
+         * @param {number | undefined} pan
+         * @returns {{ sourceNode: AudioBufferSourceNode; gainNode: GainNode; pannerNode: StereoPannerNode; volumeAtGainNodes: GainNode[] }}
          */
         function playSound(
             buffer,
@@ -174,7 +175,8 @@ function startAudio(app) {
             startAt,
             currentTime,
             loop,
-            playbackRate
+            playbackRate,
+            pan
         ) {
             let source = context.createBufferSource();
 
@@ -216,9 +218,14 @@ function startAudio(app) {
             let gainNode = context.createGain();
             gainNode.gain.setValueAtTime(volume, 0);
 
+            // An older elm-audio sends no pan: play it centered.
+            let pannerNode = context.createStereoPanner();
+            pannerNode.pan.setValueAtTime(pan ?? 0, 0);
+
             connectNodes([
                 source,
                 gainNode,
+                pannerNode,
                 ...timelineGainNodes,
                 context.destination,
             ]);
@@ -237,6 +244,7 @@ function startAudio(app) {
             return {
                 sourceNode: source,
                 gainNode: gainNode,
+                pannerNode: pannerNode,
                 volumeAtGainNodes: timelineGainNodes,
             };
         }
@@ -252,6 +260,7 @@ function startAudio(app) {
                         value.nodes.sourceNode.stop();
                         value.nodes.sourceNode.disconnect();
                         value.nodes.gainNode.disconnect();
+                        value.nodes.pannerNode.disconnect();
                         value.nodes.volumeAtGainNodes.map((node) =>
                             node.disconnect()
                         );
@@ -270,7 +279,7 @@ function startAudio(app) {
                         value.nodes.volumeAtGainNodes.map((node) =>
                             node.disconnect()
                         );
-                        value.nodes.gainNode.disconnect();
+                        value.nodes.pannerNode.disconnect();
 
                         let newGainNodes = createVolumeTimelineGainNodes(
                             audio.volumeAt,
@@ -278,7 +287,7 @@ function startAudio(app) {
                         );
 
                         connectNodes([
-                            value.nodes.gainNode,
+                            value.nodes.pannerNode,
                             ...newGainNodes,
                             context.destination,
                         ]);
@@ -305,6 +314,14 @@ function startAudio(app) {
                         );
                         break;
                     }
+                    case "setPan": {
+                        let value = audioPlaying[audio.nodeGroupId];
+                        value.nodes.pannerNode.pan.setValueAtTime(
+                            audio.pan,
+                            0
+                        );
+                        break;
+                    }
                     case "startSound": {
                         let nodes = playSound(
                             audioBuffers[audio.bufferId],
@@ -314,7 +331,8 @@ function startAudio(app) {
                             audio.startAt,
                             currentTime,
                             audio.loop,
-                            audio.playbackRate
+                            audio.playbackRate,
+                            audio.pan
                         );
                         audioPlaying[audio.nodeGroupId] = {
                             bufferId: audio.bufferId,
